@@ -128,6 +128,33 @@ class TestParser(unittest.TestCase):
         self.assertEqual(args.include, "registry,folders")
 
 
+class TestMixedNamesAreAllReported(unittest.TestCase):
+    """名字里混了一个不存在的，必须两条都报出来。
+
+    以前只有「一个都没找到」时才打印问题列表；混着写就只报成功那条、退出码 0，
+    用户以为两个都办了。
+    """
+
+    def test_off_reports_the_missing_name_too(self):
+        with quiet_stdout() as buffer:
+            code = cli.main(["off", "绝对不存在_xyz", "--dry-run"])
+        out = buffer.getvalue()
+        self.assertEqual(code, 1)
+        self.assertIn("绝对不存在_xyz", out)
+
+    def test_off_with_one_good_and_one_bad_exits_nonzero(self):
+        entries = autostart.scan(("registry",))[0]
+        good = next((e for e in entries if e.kind == "run" and not e.protected), None)
+        if good is None:
+            self.skipTest("这台机器上没有可用的用户 Run 条目")
+        with quiet_stdout() as buffer:
+            code = cli.main(["off", good.name, "绝对不存在_xyz", "--dry-run"])
+        out = buffer.getvalue()
+        self.assertEqual(code, 1, out)
+        self.assertIn("绝对不存在_xyz", out)
+        self.assertIn(good.name, out)
+
+
 class TestTruncationIsDisclosed(unittest.TestCase):
     """截断必须说出来。
 

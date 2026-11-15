@@ -221,7 +221,9 @@ def _cmd_off(args) -> int:
     done, backup = actions.disable(
         picked, force=args.force, dry_run=args.dry_run, mode=args.mode
     )
-    code = _print_results(done)
+    # results 里是「没找到 / 匹配到多条」这类问题。以前只有一条都没找到时才打印，
+    # 于是 `pcxray off 真的 不存在的` 只报成功那一条、退出码 0 —— 用户以为两个都办了。
+    code = _print_results(results + done)
     if backup:
         print("")
         print(f"  备份已写入：{backup}")
@@ -240,7 +242,7 @@ def _cmd_on(args) -> int:
     done, backup = actions.enable(
         picked, force=args.force, dry_run=args.dry_run, mode=args.mode
     )
-    code = _print_results(done)
+    code = _print_results(results + done)
     if backup:
         print("")
         print(f"  备份已写入：{backup}")
