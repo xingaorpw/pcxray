@@ -151,6 +151,12 @@ def protected_service(name: str, path: str = "") -> bool:
         return False
     if exe_of(path) in _SYSTEM_HOSTS:
         return True
+    # 兜底：命令行里**任何位置**出现系统宿主都算系统组件。
+    # 只取第一个 token 不够 —— 有的服务把整条命令行用引号包起来
+    # （`"C:\Windows\system32\svchost.exe -k netsvcs"`），那样 exe_of 会
+    # 得到 `svchost.exe -k netsvcs`，对不上名字表。宁可多保护几条。
+    if any(host in low for host in _SYSTEM_HOSTS):
+        return True
     return any(fragment in low for fragment in _SYSTEM_DIRS)
 
 

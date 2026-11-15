@@ -70,6 +70,13 @@ class TestProtectedService(unittest.TestCase):
             safety.protected_service("SomeSvc", r'"C:\Windows\System32\svchost.exe" -k netsvcs')
         )
 
+    def test_whole_command_line_wrapped_in_quotes(self):
+        # 有的服务把整条命令行用引号包起来，exe_of 会得到
+        # `svchost.exe -k netsvcs`，对不上名字表 —— 所以要按子串兜一层
+        self.assertTrue(
+            safety.protected_service("SomeSvc", '"C:\\Windows\\system32\\svchost.exe -k netsvcs"')
+        )
+
     def test_name_only_does_not_guess(self):
         # 只给名字时不能替调用方假设「不知道就当系统组件」——那是扫描器的策略
         self.assertFalse(safety.protected_service("AdskLicensingService"))

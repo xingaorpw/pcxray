@@ -237,7 +237,13 @@ class TestRealScan(unittest.TestCase):
             self.skipTest("读不到服务列表")
         svchost_ones = [e for e in entries if "svchost.exe" in (e.command or "").lower()]
         self.assertTrue(svchost_ones, "应该有跑在 svchost 里的服务")
-        self.assertTrue(all(e.protected for e in svchost_ones), "svchost 承载的服务必须算系统组件")
+        loose = [e for e in svchost_ones if not e.protected]
+        # 失败时把出问题的那几条原样打出来 —— 只看到「False is not true」根本
+        # 不知道是哪一条、命令行长什么样，那就得靠猜
+        detail = "\n".join(
+            f"  {e.name}: command={e.command!r} exe={e.exe!r} note={e.note!r}" for e in loose
+        )
+        self.assertFalse(loose, f"这些 svchost 服务没被认成系统组件：\n{detail}")
 
 
 if __name__ == "__main__":
