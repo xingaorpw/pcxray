@@ -614,6 +614,9 @@ def restore(path: str = "", dry_run: bool = False) -> tuple[list[Result], str]:
         try:
             if (
                 op.get("kind") == "flag"
+                # 老值是字符串的时候照旧还原：那是「把用户原来的数据放回去」，
+                # 不是我们写的那种开关标记，不能因为自启项没了就把它丢掉。
+                and op.get("old_str") is None
                 and op.get("target_subkey")
                 and not _value_exists(op.get("hive", ""), op["target_subkey"], op.get("value_name", ""))
             ):

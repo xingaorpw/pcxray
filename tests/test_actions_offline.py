@@ -360,6 +360,28 @@ class TestRestoreDoesNotRecreateStaleFlags(unittest.TestCase):
         self.assertTrue(results[0].ok)
         self.assertIn("已经不在了", results[0].message)
 
+    def test_string_valued_old_flag_is_restored_even_if_item_is_gone(self):
+        # 老值是字符串 = 用户原来的数据，不能因为自启项没了就跳过
+        op = {
+            "kind": "flag",
+            "hive": "HKCU",
+            "subkey": r"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run",
+            "target_subkey": r"Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+            "value_name": "pcxray_definitely_not_there",
+            "name": "pcxray_definitely_not_there",
+            "existed": True,
+            "old": None,
+            "old_str": "原来是字符串",
+            "old_kind": 1,
+            "new": "03" + "00" * 10,
+        }
+        path = os.path.join(self._dir.name, "str.json")
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump({"created": "2026-11-15 03:00:00", "ops": [op]}, handle)
+        results, _used = actions.restore(path, dry_run=True)
+        self.assertEqual(len(results), 1)
+        self.assertNotIn("已经不在了", results[0].message)
+
     def test_op_without_target_subkey_still_restores(self):
         # 老备份没有这个字段，不能因为「不知道」就跳过
         op = {
