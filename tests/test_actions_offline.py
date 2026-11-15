@@ -324,6 +324,89 @@ class TestRestoreSkipsUnusableBackups(unittest.TestCase):
         self.assertFalse(actions._backup_is_usable(os.path.join(self._dir.name, "nope.json")))
 
 
+class TestRepeatedChangesAreNoOps(unittest.TestCase):
+    """已经是目标状态就别再写一遍。
+
+    重复 `off` 一条本来就关着的项，以前会又写一份备份、又报「已写入开关标记」——
+    用户会以为刚才那次没生效，备份目录也跟着长胖。
+    """
+
+    def setUp(self):
+        self._dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._dir.cleanup)
+        patcher = mock.patch.object(actions, "BACKUP_DIR", self._dir.name)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.written: list[tuple] = []
+        self.state: bytes | None = None
+
+    def _entry(self):
+        return autostart.Entry(
+            name="Probe",
+            kind="run",
+            source="用户 Run",
+            scope="user",
+            command=r"C:\Windows\System32\notepad.exe",
+            exe=r"C:\Windows\System32\notepad.exe",
+            enabled=True,
+            locator={
+                "hive": "HKCU",
+                "subkey": r"Software\Microsoft\Windows\CurrentVersion\Run",
+                "value": "Probe",
+            },
+        )
+
+    def _fake_state(self, first_byte: bytes | None):
+        """假装 StartupApproved 里现在是这个状态（None = 从来没有过）。"""
+        self.state = None if first_byte is None else first_byte + b"\x00" * 11
+
+        def read(hive, subkey, name):
+            if "StartupApproved" in subkey:
+                return (self.state is not None, self.state, 3)
+            return (True, "x", 1)
+
+        def write(hive, subkey, name, data):
+            self.written.append((hive, subkey, name, data))
+            if "StartupApproved" in subkey:
+                self.state = data
+
+        for patcher in (
+            mock.patch.object(actions, "_read_value", side_effect=read),
+            mock.patch.object(actions, "_write_value", side_effect=write),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_off_on_already_disabled_is_a_no_op(self):
+        self._fake_state(b"\x03")
+        results, backup = actions.disable([self._entry()])
+        self.assertEqual(backup, "", "不该写备份")
+        self.assertEqual(self.written, [], "不该动注册表")
+        self.assertTrue(results[0].ok)
+        self.assertIn("本来就是关着的", results[0].message)
+
+    def test_on_when_never_disabled_is_a_no_op(self):
+        self._fake_state(None)
+        results, backup = actions.enable([self._entry()])
+        self.assertEqual(backup, "")
+        self.assertEqual(self.written, [])
+        self.assertIn("本来就是开着的", results[0].message)
+
+    def test_off_on_enabled_item_still_writes(self):
+        self._fake_state(b"\x06")
+        results, backup = actions.disable([self._entry()])
+        self.assertTrue(backup, "改了就得备份")
+        self.assertEqual(len(self.written), 1)
+        self.assertIn("已写入", results[0].message)
+
+    def test_on_after_another_tool_disabled_it_still_writes(self):
+        # 0x04 是别的工具留下的「关」标记，对它执行 on 是真改动
+        self._fake_state(b"\x04")
+        results, backup = actions.enable([self._entry()])
+        self.assertTrue(backup)
+        self.assertEqual(len(self.written), 1)
+
+
 class TestRestoreDoesNotRecreateStaleFlags(unittest.TestCase):
     """自启项被删掉之后，还原不该再往 StartupApproved 里写标记。
 

@@ -274,8 +274,17 @@ def _plan(entry, turn_on: bool, mode: str) -> dict | None:
         # 「删掉这条记录」，和「恢复成原来的空字符串」不是一回事。
         old_hex = old_value.hex() if isinstance(old_value, (bytes, bytearray)) else None
         old_str = old_value if isinstance(old_value, str) else None
+        # 已经是目标状态就别再写一遍。重复 `off` 一条本来就关着的项，以前会
+        # 又写一份备份、又报「已写入开关标记」—— 用户会以为刚才那次没生效，
+        # 备份目录也跟着长胖。
+        first = (old_hex or "")[:2]
+        if turn_on:
+            already = (not existed) or first in ("02", "06")
+        else:
+            already = existed and first in ("03", "04")
         return {
             "kind": "flag",
+            "noop": already,
             "hive": hive,
             "subkey": approved,
             "value_name": value,
@@ -417,6 +426,7 @@ def _run(items, turn_on: bool, force: bool, dry_run: bool, mode: str) -> tuple[l
     results: list[Result] = []
     plans: list[dict] = []
     skipped: list[Result] = []
+    already: list[Result] = []
     seen: set[str] = set()
     admin = _is_admin()
 
@@ -451,25 +461,30 @@ def _run(items, turn_on: bool, force: bool, dry_run: bool, mode: str) -> tuple[l
         if plan.get("refuse"):
             skipped.append(Result(entry.name, False, f"跳过：{plan['refuse']}"))
             continue
+        if plan.get("noop"):
+            already.append(
+                Result(entry.name, True, "本来就是开着的，没动" if turn_on else "本来就是关着的，没动")
+            )
+            continue
         plans.append(plan)
 
     if not plans:
-        return skipped, ""
+        return already + skipped, ""
 
     if dry_run:
         for plan in plans:
             results.append(Result(plan["name"], True, f"（演练）将要{_describe(plan, turn_on)}"))
-        return results + skipped, ""
+        return results + already + skipped, ""
 
     try:
         backup = _save_backup(plans)
     except OSError as exc:
         # 备份失败就绝不改系统 —— 没有退路的事情不做
-        return skipped + [Result("（全部）", False, f"备份写不进去，已中止：{exc}")], ""
+        return already + skipped + [Result("（全部）", False, f"备份写不进去，已中止：{exc}")], ""
 
     for plan in plans:
         results.append(_apply(plan, turn_on))
-    return results + skipped, backup
+    return results + already + skipped, backup
 
 
 def _describe(plan: dict, turn_on: bool) -> str:
