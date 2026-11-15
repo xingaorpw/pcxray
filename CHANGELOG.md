@@ -25,6 +25,14 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **README 里写的选项和子命令，命令行认不认，以前没人对过。** 代码里删一个
+  选项、README 还留着，用户复制粘贴得到一句 `unrecognized arguments`，而
+  测试全绿 —— 因为测试不读 README。现在 ci_checks 直接问 argparse：
+  README 里出现的每个 `--选项` 和 `pcxray 子命令` 都必须在 `build_parser()`
+  里找得到（`--silent` / `--no-startup-window` 是那一行在讲别的软件，排除）。
+  反证过两次：README 写 `--all-renamed` → 「命令行没有：--all-renamed」；
+  写 `pcxray prune2` → 「命令行没有：prune2」。第一次反证时正则写成
+  `[a-z]+`，`prune2` 被截成 `prune`，检查照样绿 —— 改成 `[a-z][a-z0-9]*`。
 - **自检会在真机器上写注册表，但以前没人证明它跑完能擦干净。** 自检要建探针、
   挪走、再删掉，全靠每个检查自己记得收尾 —— 上一轮就真漏了一次（探针留在
   `Run-pcxray-disabled`，之后每轮对账都多一条）。现在 `main()` 在开跑前把

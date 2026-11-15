@@ -1164,6 +1164,55 @@ def check_dry_run_writes_nothing() -> None:
                 pass
 
 
+def check_readme_options_exist() -> None:
+    """README 里写到的每个 `--选项`，命令行必须真的认。
+
+    文档最容易被改坏的地方：代码里删了一个选项，README 还留着。用户照着
+    复制粘贴，得到一句 `unrecognized arguments` —— 而所有测试都是绿的，
+    因为测试不读 README。
+    """
+    import re as _re
+
+    from pcxray import cli
+
+    parser = cli.build_parser()
+    known: set[str] = set()
+
+    def collect(target) -> None:
+        for action in target._actions:
+            known.update(action.option_strings)
+            if action.__class__.__name__ == "_SubParsersAction":
+                for sub in action.choices.values():
+                    collect(sub)
+
+    collect(parser)
+    # README 里有一行在讲「别的软件怎么隐藏窗口」，举了别人的参数，不是我们的
+    foreign = {"--silent", "--no-startup-window"}
+    text = open("README.md", encoding="utf-8").read()
+    mentioned = set(_re.findall(r"--[a-z][a-z0-9-]*", text)) - foreign
+    gone = sorted(mentioned - known)
+    check(
+        "README 里的选项命令行都认",
+        not gone,
+        "" if not gone else "命令行没有：" + "、".join(gone[:5]),
+    )
+
+    # 子命令也要对：README 里 `pcxray xxx` 的 xxx 必须真的是个子命令
+    subs: set[str] = set()
+    for action in parser._actions:
+        if action.__class__.__name__ == "_SubParsersAction":
+            subs.update(action.choices)
+    # 必须允许数字：写成 `[a-z]+` 时，`pcxray prune2` 会被截成 `prune`，
+    # 正好是个合法子命令，检查就漏了（试过）。
+    used = set(_re.findall(r"pcxray ([a-z][a-z0-9]*)", text))
+    missing = sorted(used - subs)
+    check(
+        "README 里的子命令命令行都认",
+        not missing,
+        "" if not missing else "命令行没有：" + "、".join(missing[:5]),
+    )
+
+
 def main() -> int:
     print("端到端自检")
     # 先记下这台机器现在的样子，最后再比一遍
@@ -1190,6 +1239,7 @@ def main() -> int:
     check_autostart_memory_is_deduped()
     check_dry_run_writes_nothing()
     check_readme_test_count()
+    check_readme_options_exist()
     check_python39_syntax()
     # 自检自己在真机器上写注册表（建探针、挪走、再删掉）。跑完必须和跑之前
     # 一模一样 —— 否则「自检」本身就成了污染源（真发生过：dry_run 被短路时
