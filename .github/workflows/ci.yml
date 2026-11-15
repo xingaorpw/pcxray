@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: ${{ matrix.os }} · py${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # ubuntu-latest 已经是 26.04，没有 3.9 的构建，钉住 22.04
+          - os: ubuntu-22.04
+            python: "3.9"
+          - os: ubuntu-latest
+            python: "3.10"
+          - os: ubuntu-latest
+            python: "3.12"
+          - os: windows-latest
+            python: "3.12"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: 编译检查
+        run: python -m compileall -q pcxray
+      - name: 单元测试
+        run: python -m unittest discover -s tests -t . -v
+
+  smoke:
+    name: 冒烟 · 真实系统上跑一遍
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 安装
+        run: pip install -e .
+      - name: 列自启（应该能找到东西，且不报错）
+        run: pcxray list --limit 5
+      - name: 看内存
+        run: pcxray ram --limit 5
+      - name: JSON 输出能被解析
+        run: python -c "import json,subprocess; d=json.loads(subprocess.run(['pcxray','list','--json'],capture_output=True,text=True,encoding='utf-8').stdout); assert 'autostart' in d; print('ok', d['autostart']['total'])"
+      - name: 网页接口能起来
+        run: |
+          python -c "import threading,urllib.request,json; from pcxray import web; s=web.make_server(0); threading.Thread(target=s.serve_forever,daemon=True).start(); p=s.server_address[1]; d=json.loads(urllib.request.urlopen(f'http://127.0.0.1:{p}/api/report').read()); print('ok', d['process_count']); s.shutdown()"
+      - name: 不存在的名字必须被拒绝（返回非 0）
+        run: |
+          pcxray off 绝对不存在的条目名_xyz
+          if ($LASTEXITCODE -eq 0) { exit 1 } else { exit 0 }
+        shell: pwsh

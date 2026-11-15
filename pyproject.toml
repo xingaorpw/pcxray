@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pcxray"
+version = "0.1.0"
+description = "查清开机时谁自己启动、后台谁在占内存，还能一条条关掉并随时还原"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "xingaorpw" }]
+keywords = ["windows", "autostart", "startup", "registry", "memory", "task-manager"]
+classifiers = [
+  "Environment :: Win32 (MS Windows)",
+  "Intended Audience :: End Users/Desktop",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: System :: Systems Administration",
+  "Topic :: Utilities",
+]
+dependencies = []
+
+[project.scripts]
+pcxray = "pcxray.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/xingaorpw/pcxray"
+
+[tool.setuptools]
+packages = ["pcxray"]

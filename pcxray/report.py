@@ -1,0 +1,393 @@
+"""把自启项、进程、内存合成一份报告，并渲染成人能读的文字。
+
+两条诚实纪律贯穿这个文件：
+
+1. **读不到就说读不到。** 非管理员看不到一部分进程的路径，PowerShell 挂了
+   读不到计划任务 —— 这些都要显示成「读不到」，不能变成空白。
+2. **不重复计算。** 两个 Edge 自启项指向同一个 msedge.exe，按条目加内存会
+   算两遍。所以「自启占了多少内存」按 **PID 去重** 求和。
+"""
+
+from __future__ import annotations
+
+import os
+import time
+
+from . import autostart, procs, safety, text, winapi
+
+__all__ = ["Item", "Report", "build", "render"]
+
+
+class Item:
+    """一条自启项 + 关于它的所有判断结果。"""
+
+    __slots__ = (
+        "entry",
+        "exists",
+        "company",
+        "description",
+        "suspect",
+        "hidden",
+        "runs",
+        "run_mb",
+        "refuse",
+        "needs_force",
+        "auto_started",
+    )
+
+    def __init__(self, entry: autostart.Entry):
+        self.entry = entry
+        self.exists: bool | None = None
+        self.company = ""
+        self.description = ""
+        self.suspect = ""
+        self.hidden = False
+        self.runs: list[winapi.Process] = []
+        self.run_mb = 0.0
+        self.refuse = ""
+        self.needs_force = False
+        self.auto_started = False
+
+    @property
+    def name(self) -> str:
+        return self.entry.name
+
+    @property
+    def flags(self) -> list[str]:
+        """短标记，给表格用。"""
+        out = []
+        if self.exists is False:
+            out.append("文件不存在")
+        if self.suspect:
+            out.append("可疑路径")
+        if self.hidden:
+            out.append("不显示窗口")
+        if self.runs:
+            out.append("正在运行")
+        if not self.company and self.exists:
+            out.append("无发行商")
+        if self.needs_force and not self.refuse:
+            out.append("需确认")
+        return out
+
+    def as_dict(self) -> dict:
+        data = self.entry.as_dict()
+        data.update(
+            {
+                "exists": self.exists,
+                "company": self.company,
+                "description": self.description,
+                "suspect": self.suspect,
+                "hidden_args": self.hidden,
+                "running": [{"pid": p.pid, "mb": round(p.mb, 1)} for p in self.runs],
+                "running_mb": round(self.run_mb, 1),
+                "auto_started": self.auto_started,
+                "can_disable": not self.refuse,
+                "needs_force": self.needs_force,
+                "refuse": self.refuse,
+                "flags": self.flags,
+            }
+        )
+        return data
+
+
+class Report:
+    def __init__(self) -> None:
+        self.items: list[Item] = []
+        self.problems: list[str] = []
+        self.groups: list[procs.Group] = []
+        self.background: list[winapi.Process] = []
+        self.admin = False
+        self.logon = 0.0
+        self.boot = 0.0
+        self.total_ram = 0
+        self.avail_ram = 0
+        self.memory_coverage = "all"
+        self.process_count = 0
+        self.unreadable = 0
+        self.auto_mb = 0.0
+        self.auto_count = 0
+
+    # -------------------------------------------------- 汇总数字
+
+    @property
+    def enabled(self) -> list[Item]:
+        return [i for i in self.items if i.entry.enabled]
+
+    @property
+    def disabled(self) -> list[Item]:
+        return [i for i in self.items if not i.entry.enabled]
+
+    def autostart_memory(self) -> float:
+        """自启项现在实际占的内存（按 PID 去重）。"""
+        pids: dict[int, float] = {}
+        for item in self.items:
+            if not item.entry.enabled:
+                continue
+            for proc in item.runs:
+                pids[proc.pid] = proc.mb
+        return sum(pids.values())
+
+    def as_dict(self) -> dict:
+        return {
+            "generated": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "admin": self.admin,
+            "memory_coverage": self.memory_coverage,
+            "logon": self.logon,
+            "boot": self.boot,
+            "ram": {
+                "total": self.total_ram,
+                "available": self.avail_ram,
+            },
+            "process_count": self.process_count,
+            "unreadable_processes": self.unreadable,
+            "autostart": {
+                "total": len(self.items),
+                "enabled": len(self.enabled),
+                "disabled": len(self.disabled),
+                "memory_mb": round(self.autostart_memory(), 1),
+                "items": [i.as_dict() for i in self.items],
+            },
+            "background": [
+                {
+                    "pid": p.pid,
+                    "name": p.name,
+                    "mb": round(p.mb, 1),
+                    "path": p.path,
+                    "started": p.started,
+                }
+                for p in self.background
+            ],
+            "groups": [g.as_dict() for g in self.groups],
+            "problems": self.problems,
+        }
+
+
+# ------------------------------------------------------------------ 构建
+
+
+def _annotate(entry: autostart.Entry, procs_list: list[winapi.Process], admin: bool) -> Item:
+    item = Item(entry)
+    exe = entry.exe
+    if exe:
+        item.exists = os.path.isfile(exe)
+        if item.exists:
+            info = winapi.version_info(exe)
+            item.company = info.get("company", "")
+            item.description = info.get("description", "")
+        item.suspect = safety.suspect_path(exe)
+    else:
+        item.exists = None  # 连路径都没解析出来，不知道存不存在
+    item.hidden = safety.hidden_args(entry.command)
+    item.runs = procs.running_of(exe, procs_list)
+    item.run_mb = sum(p.mb for p in item.runs)
+    item.refuse = safety.refuse_reason(
+        entry.kind, entry.scope, entry.name, entry.protected, admin
+    )
+    item.needs_force = safety.needs_force(entry.kind) and not item.refuse
+    return item
+
+
+def build(
+    include: tuple[str, ...] = ("registry", "folders", "tasks", "services"),
+    entries: list[autostart.Entry] | None = None,
+    process_list: list[winapi.Process] | None = None,
+) -> Report:
+    report = Report()
+    report.admin = winapi.is_admin()
+    process_list = process_list if process_list is not None else winapi.processes()
+    if entries is None:
+        entries, problems = autostart.scan(include)
+        report.problems = list(problems)
+    report.process_count = len(process_list)
+    report.unreadable = sum(1 for p in process_list if not p.readable)
+    report.memory_coverage = winapi.COVERAGE["mode"]
+    if report.memory_coverage != "all":
+        report.problems.append(winapi.COVERAGE["reason"])
+    report.logon = procs.logon_time(process_list)
+    report.boot = winapi.boot_time()
+    report.total_ram, report.avail_ram = winapi.memory_status()
+    report.groups = procs.group(process_list)
+    report.background = procs.background_heavy(process_list)
+    report.items = [_annotate(e, process_list, report.admin) for e in entries]
+    auto_pids = procs.autostart_pids(process_list, report.logon)
+    report.auto_count = len(auto_pids)
+    report.auto_mb = sum(p.mb for p in process_list if p.pid in auto_pids)
+    for item in report.items:
+        item.auto_started = any(p.pid in auto_pids for p in item.runs)
+    return report
+
+
+# ------------------------------------------------------------------ 渲染
+
+
+def _state(entry: autostart.Entry) -> str:
+    return "启用" if entry.enabled else "已禁用"
+
+
+def _kind_label(kind: str) -> str:
+    return {
+        "run": "注册表 Run",
+        "run32": "注册表 Run（32 位）",
+        "runonce": "注册表 RunOnce",
+        "folder": "启动文件夹",
+        "task": "计划任务",
+        "service": "自动服务",
+    }.get(kind, kind)
+
+
+def _short_source(entry: autostart.Entry) -> str:
+    """来源的短写法。长名字会把整张表撑歪。"""
+    if entry.kind == "folder":
+        return "用户启动夹" if entry.scope == "user" else "公共启动夹"
+    if entry.kind == "task":
+        return "计划任务"
+    if entry.kind == "service":
+        return "服务"
+    if entry.kind == "run32":
+        return "所有用户 Run32"
+    if entry.kind == "runonce":
+        return "RunOnce"
+    return "用户 Run" if entry.scope == "user" else "所有用户 Run"
+
+
+def render(report: Report, limit: int = 0, only: str = "") -> list[str]:
+    """渲染成终端文本。
+
+    默认只把「注册表 Run + 启动文件夹」铺开 —— 那是用户真正会去关的东西。
+    计划和任务/服务加起来一百多条，全铺出来会把有用的信息挤出屏幕；它们的
+    数量单独给一行，要看用 `--kind`。
+    """
+    lines: list[str] = []
+    lines.append("")
+    lines.append(f"  pcxray · {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    lines.append("")
+
+    # ---- 概览
+    if report.total_ram:
+        used = report.total_ram - report.avail_ram
+        lines.append(
+            f"  内存 {text.mb(report.total_ram / 1048576)}  "
+            f"已用 {text.mb(used / 1048576)}  "
+            f"可用 {text.mb(report.avail_ram / 1048576)}"
+        )
+    if report.logon:
+        lines.append(
+            f"  开机 {time.strftime('%m-%d %H:%M', time.localtime(report.boot))}"
+            f"　登录 {time.strftime('%m-%d %H:%M', time.localtime(report.logon))}"
+        )
+    lines.append(
+        f"  进程 {report.process_count} 个"
+        f"　自启 {len(report.items)} 条（启用 {len(report.enabled)}）"
+    )
+    auto_mb = report.autostart_memory()
+    if auto_mb:
+        lines.append(
+            f"  自启项现在占着 {text.mb(auto_mb)}"
+            f"（按进程去重；登录后 90 秒内起来的 {report.auto_count} 个进程共 "
+            f"{text.mb(report.auto_mb)}）"
+        )
+    lines.append("")
+
+    # ---- 自启表
+    quick = ("run", "run32", "folder", "runonce")
+    if only:
+        shown = [i for i in report.items if i.entry.kind == only or i.entry.source.startswith(only)]
+        rest: list[Item] = []
+    else:
+        shown = [i for i in report.items if i.entry.kind in quick]
+        rest = [i for i in report.items if i.entry.kind not in quick]
+
+    if limit:
+        shown = shown[:limit]
+    if shown:
+        rows = []
+        for item in shown:
+            mark = []
+            if item.exists is False:
+                mark.append("!文件没了")
+            if item.suspect:
+                mark.append("!可疑")
+            if item.hidden:
+                mark.append("不显窗")
+            if item.runs:
+                mark.append(f"占{text.mb(item.run_mb)}")
+            rows.append(
+                [
+                    _state(item.entry),
+                    item.name,
+                    _short_source(item.entry),
+                    item.company or "—",
+                    " ".join(mark),
+                ]
+            )
+        header = f"  {_kind_label(only)}" if only else "  开机自启（注册表 + 启动文件夹）"
+        lines.append(header)
+        lines.extend(
+            "  " + line
+            for line in text.table(
+                ["状态", "名称", "来源", "发行商", "备注"],
+                rows,
+                ["left", "left", "left", "left", "left"],
+                limits=[6, 46, 14, 18, 28],
+            )
+        )
+        lines.append("")
+
+    # ---- 其余来源只给计数
+    if rest:
+        counts: dict[str, list[Item]] = {}
+        for item in rest:
+            counts.setdefault(item.entry.kind, []).append(item)
+        parts = []
+        for kind in ("task", "service"):
+            group = counts.get(kind)
+            if not group:
+                continue
+            on = sum(1 for i in group if i.entry.enabled)
+            parts.append(f"{_kind_label(kind)} {len(group)} 条（启用 {on}）")
+        if parts:
+            lines.append("  还有：" + "　".join(parts))
+            lines.append("  　用 pcxray list --kind task / --kind service 看明细")
+            lines.append("")
+
+    # ---- 后台
+    if report.background:
+        lines.append("  后台占内存（没有可见窗口，超过 100 MB）")
+        rows = []
+        for proc in report.background[:15]:
+            rows.append(
+                [
+                    proc.name,
+                    text.mb(proc.mb),
+                    procs.describe_started(proc.started, report.logon),
+                    proc.path or "读不到路径",
+                ]
+            )
+        lines.extend(
+            "  " + line
+            for line in text.table(
+                ["程序", "内存", "启动", "路径"],
+                rows,
+                ["left", "right", "left", "left"],
+                limits=[28, 10, 18, 44],
+            )
+        )
+
+    # ---- 提示
+    notes: list[str] = []
+    if not report.admin:
+        notes.append(
+            f"不是管理员：{report.unreadable} 个进程读不到路径和启动时间。"
+            "要完整信息用 pcxray list --elevate"
+        )
+    if report.memory_coverage != "all":
+        notes.append("内存数据只覆盖了一部分进程（见上面的 problems）")
+    for problem in report.problems:
+        notes.append(problem)
+    if notes:
+        lines.append("")
+        for note in notes:
+            lines.append(f"  · {note}")
+    lines.append("")
+    return lines
