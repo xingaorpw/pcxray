@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import os
 import tempfile
+import contextlib
 import unittest
+from unittest import mock
 
 from pcxray import autostart
 
@@ -140,6 +142,57 @@ class TestEntry(unittest.TestCase):
     def test_repr_mentions_state(self):
         e = autostart.Entry(name="X", kind="run", source="s", enabled=False)
         self.assertIn("禁用", repr(e))
+
+
+class TestWeirdRegistryValueTypes(unittest.TestCase):
+    """Run 里的值不一定是字符串。
+
+    有些程序（和一部分恶意软件）会把 Run 的值写成 REG_DWORD。Windows 不会拿它
+    启动任何东西，但它确实在注册表里 —— 静默跳过等于让用户以为「这一条不存在」。
+    """
+
+    SINGLE_KEY = (
+        ("HKCU", r"Software\Microsoft\Windows\CurrentVersion\Run", "user", "run", "用户 Run"),
+    )
+
+    def setUp(self):
+        self.problems: list[str] = []
+
+    @contextlib.contextmanager
+    def _fake_values(self, values):
+        # 只留一个键，不然同一个假值会被 5 个键各读一遍
+        with mock.patch.object(autostart, "RUN_KEYS", self.SINGLE_KEY), mock.patch.object(
+            autostart, "_read_values", return_value=values
+        ):
+            yield
+
+    def test_non_string_value_is_reported_not_swallowed(self):
+        with self._fake_values([("BadType", 12345, 4)]):
+            entries = autostart.scan_registry(self.problems)
+        self.assertEqual(entries, [])
+        self.assertEqual(len(self.problems), 1)
+        self.assertIn("BadType", self.problems[0])
+        self.assertIn("不是字符串", self.problems[0])
+
+    def test_no_problems_list_still_works(self):
+        # 老调用方式（不传 problems）不能炸
+        with self._fake_values(
+            [("BadType", 12345, 4), ("Good", r'"C:\Windows\notepad.exe"', 1)]
+        ):
+            entries = autostart.scan_registry()
+        self.assertEqual([e.name for e in entries], ["Good"])
+
+    def test_empty_string_value_gets_a_caveat(self):
+        with self._fake_values([("Empty", "", 1)]):
+            entries = autostart.scan_registry(self.problems)
+        self.assertEqual(len(entries), 1)
+        self.assertIn("空的", entries[0].caveat)
+
+    def test_normal_value_has_no_caveat(self):
+        with self._fake_values([("Good", r'"C:\Windows\notepad.exe"', 1)]):
+            entries = autostart.scan_registry(self.problems)
+        self.assertEqual(entries[0].caveat, "")
+        self.assertEqual(self.problems, [])
 
 
 if __name__ == "__main__":

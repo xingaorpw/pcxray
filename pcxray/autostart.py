@@ -249,12 +249,22 @@ def approved_state(hive_name: str, kind: str, name: str) -> bool | None:
     return None
 
 
-def scan_registry() -> list[Entry]:
-    """注册表 Run / RunOnce 全部条目。"""
+def scan_registry(problems: list[str] | None = None) -> list[Entry]:
+    """注册表 Run / RunOnce 全部条目。
+
+    `problems` 传进来一个列表时，读不懂的值会往里面写一句说明 —— 静默跳过等于
+    让用户以为「这一条不存在」，而它确实在注册表里躺着。
+    """
     out: list[Entry] = []
     for hive_name, subkey, scope, kind, label in RUN_KEYS:
         for name, value, vtype in _read_values(hive_name, subkey):
             if not isinstance(value, str):
+                # 有些程序（和一部分恶意软件）会把 Run 的值写成 REG_DWORD 之类。
+                # Windows 不会拿它启动任何东西，但它确实存在，得说一声。
+                if problems is not None:
+                    problems.append(
+                        f"注册表「{name}」的值不是字符串，Windows 不会拿它启动任何东西，所以没列出来"
+                    )
                 continue
             command = expand_vars(value)
             exe = split_exe(command)
@@ -267,6 +277,8 @@ def scan_registry() -> list[Entry]:
             caveat = ""
             if kind == "runonce":
                 caveat = "只运行一次，禁用意义不大"
+            if not command.strip():
+                caveat = (caveat + "　" if caveat else "") + "值是空的，启动不了任何东西"
             out.append(
                 Entry(
                     name=name,
@@ -487,7 +499,7 @@ def scan(include: tuple[str, ...] = ("registry", "folders", "tasks", "services")
     entries: list[Entry] = []
     problems: list[str] = []
     if "registry" in include:
-        entries.extend(scan_registry())
+        entries.extend(scan_registry(problems))
     if "folders" in include:
         entries.extend(scan_folders())
 
