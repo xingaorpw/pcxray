@@ -25,6 +25,13 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **网页的「物理内存 / 已用」两个数字从来没被验证过，夹具还停在旧键名上。**
+  `list --json` 的 `ram` 从 `total`/`available` 改名成
+  `physical_total_mb`/`physical_available_mb` 之后，`ci_checks` 里那份假数据
+  没跟着改。页面读到 `undefined` 就安安静静显示「未知 / —」，不报错、不空白 ——
+  而没有任何一条断言看着这两个数字。现在夹具改成新键名，并且断言
+  `8192.0 MB` / `4096.0 MB` 真的出现在 `stats` 里。反证过：夹具改回旧键名，
+  立刻报「stats 里没找到 8192.0 / 4096.0 MB：物理内存 未知 已用 —」。
 - **Python 3.12+ 上第一次运行会多打一行 SyntaxWarning。** 我上一轮写的
   docstring 里直接写了 `HKCU\StartupFolder`、`HKCU\...\WOW6432Node\...\Run`，
   在非 raw 字符串里 `\S` / `\.` 都是无效转义。3.9-3.11 只是静默的

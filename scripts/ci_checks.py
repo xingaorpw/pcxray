@@ -330,7 +330,10 @@ def _payload(items: list[dict], **extra) -> dict:
         "generated": "2026-01-01 00:00:00",
         "process_count": 1,
         "problems": [],
-        "ram": {"total": 8 * 1048576, "available": 4 * 1048576},
+        # 键名必须和服务端一致（`list --json` 的 ram 块）。以前这里写的是
+        # 改名前那对 `total` / `available`，页面读到 undefined 就显示「未知」，
+        # 而没有任何一条断言会发现 —— 因为没人断言过这几个数字。
+        "ram": {"physical_total_mb": 8192.0, "physical_available_mb": 4096.0},
         "background": [],
         "autostart": {
             "total": len(items),
@@ -368,6 +371,13 @@ def check_page_js_escapes_hostile_data() -> None:
     check("危险标签没被原样写进 HTML", "<script>" not in rendered and "<img" not in rendered)
     check("危险内容被转义了", "&lt;script&gt;" in rendered and "&lt;img" in rendered)
     check("正常内容仍然渲染", "可疑路径" in rendered and "注册表 · 用户 Run" in rendered)
+    # 内存那两个数字必须真的渲染出来。键名对不上时页面会安静地显示「未知」——
+    # 不报错、不空白，就是没数字，只有断言具体数值才抓得到。
+    check(
+        "页面把物理内存渲染成数字",
+        "8192.0 MB" in blob["s"] and "4096.0 MB" in blob["s"],
+        "stats 里没找到 8192.0 / 4096.0 MB：" + re.sub(r"<[^>]+>", " ", blob["s"])[:80],
+    )
 
 
 def check_page_js_filters() -> None:
