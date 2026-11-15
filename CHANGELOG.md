@@ -25,6 +25,12 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **杀毒软件一瞬间占着文件，就让整次改自启失败。** 并发写 12 份备份的测试
+  偶尔报 `PermissionError(13, '拒绝访问。')` —— Windows 上杀毒/索引服务会短暂
+  持有刚建的文件。用户看到的是「备份写不进去，已中止」，而他什么都没做错。
+  现在对 `ERROR_ACCESS_DENIED / SHARING_VIOLATION / LOCK_VIOLATION`
+  （winerror 5/32/33）重试 6 次、间隔 50ms；别的错误照旧立刻抛，不拖后。
+  实测：并发写备份测试连跑 20 次，修之前偶发失败，修之后 0 次。
 - **同一秒里连写几份备份时，「最近一份」是最老的那份。** 备份文件名是
   `20260101-000000.json`，同秒撞名时加 `-1`、`-2` 后缀。`list_backups()`
   按**字符串**倒序排 —— `-` 比 `.` 小，所以不带后缀的那份（最老）排最前；

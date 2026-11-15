@@ -164,6 +164,24 @@ def _delete_value(hive: str, subkey: str, name: str) -> None:
 # ------------------------------------------------------------------ 备份
 
 
+# Windows 上杀毒软件、索引服务、另一个线程都可能在一瞬间占着文件，表现为
+# 「拒绝访问」或「共享冲突」。这种错重试一下就好 —— 但用户的改自启操作会因为
+# 它整个中止（`备份写不进去，已中止`），明明什么坏事都没发生。
+_TRANSIENT_WINERRORS = {5, 32, 33}
+
+
+def _retry_transient(func, attempts: int = 6, delay: float = 0.05):
+    """遇到「文件正被占用」这类瞬时错误就重试几次，别的错误照旧抛。"""
+    for attempt in range(attempts):
+        try:
+            return func()
+        except OSError as exc:
+            transient = getattr(exc, "winerror", None) in _TRANSIENT_WINERRORS
+            if not transient or attempt == attempts - 1:
+                raise
+            time.sleep(delay)
+
+
 def _reserve_backup_path(stamp: str) -> str:
     """原子地占住一个不重名的备份文件名。
 
@@ -179,7 +197,9 @@ def _reserve_backup_path(stamp: str) -> str:
         name = f"{stamp}.json" if suffix == 0 else f"{stamp}-{suffix}.json"
         path = os.path.join(BACKUP_DIR, name)
         try:
-            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            fd = _retry_transient(
+                lambda: os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            )
         except FileExistsError:
             suffix += 1
             if suffix > 999:
@@ -201,11 +221,14 @@ def _save_backup(ops: list[dict]) -> str:
     # tmp 名字必须唯一，否则并发时两个线程写同一个 .tmp 又会撞车
     tmp = f"{path}.{os.getpid()}-{threading.get_ident()}.tmp"
     try:
-        with open(tmp, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, ensure_ascii=False, indent=2)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp, path)
+        def write() -> None:
+            with open(tmp, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, ensure_ascii=False, indent=2)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp, path)
+
+        _retry_transient(write)
     except BaseException:
         # 半截的 tmp 不能留下，否则看起来像一份备份
         for leftover in (tmp,):

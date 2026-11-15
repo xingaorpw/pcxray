@@ -197,6 +197,45 @@ class TestBackupFiles(unittest.TestCase):
         self.assertEqual(len(listed), 2, "认不出名字的备份不能丢")
         self.assertEqual(listed[0], "20260101-000000.json", f"认不出的名字应该排后面：{listed}")
 
+    def test_transient_lock_is_retried_instead_of_aborting(self):
+        """杀毒软件一瞬间占着文件时，不能直接让用户的改自启操作整个中止。
+
+        真实出现过：并发写 12 份备份时，有一份报 `PermissionError(13, '拒绝
+        访问。')` —— Windows 上杀毒/索引服务会短暂持有刚建的文件。用户看到的
+        是「备份写不进去，已中止」，而他什么都没做错。
+        """
+        real_open = os.open
+        state = {"n": 0}
+
+        def flaky(path, flags, mode=0o777, *args, **kwargs):
+            if str(path).endswith(".json") and state["n"] == 0:
+                state["n"] += 1
+                raise OSError(13, "拒绝访问。", None, 32)  # 共享冲突
+            return real_open(path, flags, mode, *args, **kwargs)
+
+        with mock.patch.object(actions.os, "open", side_effect=flaky):
+            path = actions._save_backup([{"kind": "flag", "name": "X"}])
+        self.assertEqual(state["n"], 1, "根本没触发到瞬时错误，测试没验到东西")
+        self.assertTrue(os.path.isfile(path))
+        with open(path, encoding="utf-8") as handle:
+            self.assertIn("ops", json.load(handle))
+
+    def test_real_permission_problem_is_not_retried(self):
+        """不是「被占用」的错误不该重试 —— 重试只是把错误信息拖后。"""
+        real_open = os.open
+        state = {"n": 0}
+
+        def broken(path, flags, mode=0o777, *args, **kwargs):
+            if str(path).endswith(".json"):
+                state["n"] += 1
+                raise OSError(2, "找不到文件", None, 2)
+            return real_open(path, flags, mode, *args, **kwargs)
+
+        with mock.patch.object(actions.os, "open", side_effect=broken):
+            with self.assertRaises(OSError):
+                actions._save_backup([{"kind": "flag", "name": "X"}])
+        self.assertEqual(state["n"], 1, f"不该重试，却试了 {state['n']} 次")
+
     def test_parallel_saves_all_get_unique_files(self):
         """同一秒里 12 个请求同时要备份，不能有两个抢到同一个文件。
 
@@ -279,6 +318,143 @@ class TestRestoreEdge(unittest.TestCase):
             write.assert_not_called()
             delete.assert_not_called()
             self.assertTrue(results[0].ok)
+
+
+class TestRestoreServiceOps(unittest.TestCase):
+    """服务类备份记录怎么还原。
+
+    `restore` 里服务那一段以前一次都没跑过 —— 只有手工试过。服务还原要
+    `--force` + 管理员，很容易被当成「反正用不上」而漏测；但备份里真有一条
+    服务记录时，这段代码就是唯一的还原路径。
+    """
+
+    def _restore(self, op):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "b.json")
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump({"created": "2026-01-01 00:00:00", "version": 1, "ops": [op]}, handle)
+            with mock.patch.object(actions, "_set_service", return_value=(True, "已改成自动")) as fake:
+                results, _ = actions.restore(path)
+            return results[0], fake
+
+    def test_was_enabled_service_is_turned_back_on(self):
+        result, fake = self._restore(
+            {"kind": "service", "name": "SomeSvc", "service": "SomeSvc", "was_enabled": True}
+        )
+        self.assertTrue(result.ok, result.message)
+        fake.assert_called_once_with("SomeSvc", True)
+
+    def test_service_that_was_manual_is_left_alone(self):
+        result, fake = self._restore(
+            {"kind": "service", "name": "SomeSvc", "service": "SomeSvc", "was_enabled": False}
+        )
+        self.assertTrue(result.ok, result.message)
+        self.assertIn("未改动", result.message)
+        fake.assert_not_called()
+
+    def test_service_op_without_was_enabled_is_refused(self):
+        result, fake = self._restore({"kind": "service", "name": "SomeSvc", "service": "SomeSvc"})
+        self.assertFalse(result.ok)
+        self.assertIn("was_enabled", result.message)
+        fake.assert_not_called()
+
+
+class TestRestoreErrorPaths(unittest.TestCase):
+    """还原中途出错时用户看到什么。
+
+    这两句是用户唯一能拿到的东西 —— 没权限、写不进去，都必须说清楚，
+    而不是抛个 traceback。
+    """
+
+    def _restore_with(self, exc):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "b.json")
+            with open(path, "w", encoding="utf-8") as handle:
+                # 备份里 old 存的是十六进制字符串（不是 bytes —— JSON 存不了）
+                json.dump({"ops": [{"kind": "flag", "name": "X", "hive": "HKCU",
+                                    "subkey": "Software\\Test\\Run", "value_name": "X",
+                                    "existed": True, "old": "020000000000000000000000",
+                                    "old_kind": 3}]}, handle)
+            # 注册表位置得「存在」，否则会先被跳过、走不到写入那一步
+            with mock.patch.object(actions, "_subkey_exists", return_value=True), \
+                    mock.patch.object(actions, "_write_value", side_effect=exc):
+                results, _ = actions.restore(path)
+            return results[0]
+
+    def test_permission_error_says_need_admin(self):
+        result = self._restore_with(PermissionError("拒绝访问"))
+        self.assertFalse(result.ok)
+        self.assertIn("管理员", result.message)
+
+    def test_oserror_is_reported_with_reason(self):
+        result = self._restore_with(OSError("磁盘满了"))
+        self.assertFalse(result.ok)
+        self.assertIn("磁盘满了", result.message)
+
+
+class TestPruneSafety(unittest.TestCase):
+    """`prune` 只许删备份目录里的 `.json`。
+
+    这个函数会 `os.remove`。列表是它自己列的，看起来不会出错；但路径要是
+    被拼错、或者 `BACKUP_DIR` 被人改成相对路径，删的就可能是别的东西。
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.backup_dir = os.path.join(self.tmp.name, "backup")
+        os.makedirs(self.backup_dir)
+        patcher = mock.patch.object(actions, "BACKUP_DIR", self.backup_dir)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_file_outside_backup_dir_is_never_deleted(self):
+        """列表被污染时（拼错、软链接、BACKUP_DIR 被改成相对路径）也不许越界删。"""
+        outside = os.path.join(self.tmp.name, "keepme.json")
+        with open(outside, "w", encoding="utf-8") as handle:
+            handle.write("{}")
+        inside = []
+        for i in range(3):
+            path = os.path.join(self.backup_dir, f"2026010{i+1}-000000.json")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("{}")
+            inside.append(path)
+        # 直接喂一份混着外面路径的列表 —— 光靠 list_backups() 是永远造不出
+        # 这种情况的，所以必须打桩，否则这条测试什么也没验。
+        # 外面的路径必须落在**要删的那一段**（下标 >= keep）里，否则它根本
+        # 不会被考虑删除，守卫也就没被走到 —— 第一版放在第一个，反证时全绿。
+        polluted = [inside[2], inside[1], outside, inside[0]]
+        with mock.patch.object(actions, "list_backups", return_value=polluted):
+            removed, _left, _freed = actions.prune(1)
+        self.assertTrue(os.path.isfile(outside), "备份目录外面的文件被删了")
+        self.assertNotIn(outside, removed)
+        # 删掉的那些必须全在备份目录里
+        self.assertTrue(
+            all(os.path.dirname(os.path.abspath(p)) == os.path.abspath(self.backup_dir) for p in removed),
+            f"删到了目录外面：{removed}",
+        )
+
+    def test_non_json_entry_in_the_list_is_skipped(self):
+        note = os.path.join(self.backup_dir, "notes.txt")
+        with open(note, "w", encoding="utf-8") as handle:
+            handle.write("x")
+        inside = []
+        for i in range(2):
+            path = os.path.join(self.backup_dir, f"2026010{i+1}-000000.json")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("{}")
+            inside.append(path)
+        with mock.patch.object(actions, "list_backups", return_value=[note] + inside):
+            removed, _left, _freed = actions.prune(0 + 1)
+        self.assertTrue(os.path.isfile(note), "非 .json 文件被删了")
+        self.assertNotIn(note, removed)
+
+    def test_missing_backup_dir_is_not_an_error(self):
+        with tempfile.TemporaryDirectory() as gone:
+            with mock.patch.object(actions, "BACKUP_DIR", os.path.join(gone, "nope")):
+                self.assertEqual(actions.list_backups(), [])
+                removed, left, freed = actions.prune(5)
+        self.assertEqual((removed, left, freed), ([], 0, 0))
 
 
 class TestDescribe(unittest.TestCase):
