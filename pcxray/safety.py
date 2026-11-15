@@ -117,15 +117,24 @@ def protected_process(name: str) -> bool:
 def exe_of(command: str) -> str:
     """从命令行里取出 exe 的文件名（小写）。
 
-    `"C:\\a b\\x.exe" --flag` → `x.exe`，`svchost.exe -k netsvcs` → `svchost.exe`。
+    `"C:\\a b\\x.exe" --flag` → `x.exe`
+    `C:\\Program Files\\V\\x.exe -run`（没加引号，路径带空格）→ `x.exe`
+    `"C:\\Windows\\system32\\svchost.exe -k netsvcs"`（整条被引号包住）→ `svchost.exe`
+
+    做法是按**第一个 `.exe`** 截断。不能简单按空格切：注册表和服务里的路径
+    经常不带引号又带空格，按空格切会把 `C:\\Program Files\\V\\x.exe` 切成
+    `C:\\Program`（这个 bug 是测试抓到的）。
     """
     raw = (command or "").strip()
     if raw.startswith('"'):
-        end = raw.find('"', 1)
-        raw = raw[1:end] if end > 0 else raw[1:]
+        raw = raw[1:]
+    cut = raw.lower().find(".exe")
+    if cut >= 0:
+        raw = raw[: cut + 4]
     else:
+        # 没有 .exe 后缀（少见）才退回按空格切第一个 token
         raw = raw.split(" ")[0]
-    raw = raw.replace("/", "\\").rstrip("\\")
+    raw = raw.replace("/", "\\").rstrip("\\").rstrip('"')
     return raw.rsplit("\\", 1)[-1].lower()
 
 
@@ -150,12 +159,6 @@ def protected_service(name: str, path: str = "") -> bool:
     if not low:
         return False
     if exe_of(path) in _SYSTEM_HOSTS:
-        return True
-    # 兜底：命令行里**任何位置**出现系统宿主都算系统组件。
-    # 只取第一个 token 不够 —— 有的服务把整条命令行用引号包起来
-    # （`"C:\Windows\system32\svchost.exe -k netsvcs"`），那样 exe_of 会
-    # 得到 `svchost.exe -k netsvcs`，对不上名字表。宁可多保护几条。
-    if any(host in low for host in _SYSTEM_HOSTS):
         return True
     return any(fragment in low for fragment in _SYSTEM_DIRS)
 

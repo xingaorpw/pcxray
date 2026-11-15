@@ -71,10 +71,18 @@ class TestProtectedService(unittest.TestCase):
         )
 
     def test_whole_command_line_wrapped_in_quotes(self):
-        # 有的服务把整条命令行用引号包起来，exe_of 会得到
-        # `svchost.exe -k netsvcs`，对不上名字表 —— 所以要按子串兜一层
+        # 有的服务把整条命令行用引号包起来，路径和参数一起在引号里。
+        # 这时不能只取引号内容当路径，否则会得到 `svchost.exe -k netsvcs`。
         self.assertTrue(
             safety.protected_service("SomeSvc", '"C:\\Windows\\system32\\svchost.exe -k netsvcs"')
+        )
+
+    def test_name_containing_svchost_is_not_a_system_host(self):
+        # `mysvchost.exe` 只是名字里带 svchost，不是 Windows 的宿主。
+        # 之前为了过测试加过「命令行里出现 svchost.exe 子串就算系统组件」，
+        # 那条会把这种第三方程序也保护掉 —— 是错的方向，删了。
+        self.assertFalse(
+            safety.protected_service("VendorSvc", r"C:\Program Files\Vendor\mysvchost.exe -run")
         )
 
     def test_name_only_does_not_guess(self):
@@ -97,6 +105,16 @@ class TestExeOf(unittest.TestCase):
 
     def test_forward_slashes(self):
         self.assertEqual(safety.exe_of("C:/Apps/Thing.exe"), "thing.exe")
+
+    def test_whole_line_quoted_with_args(self):
+        self.assertEqual(safety.exe_of('"C:\\Windows\\system32\\svchost.exe -k netsvcs"'), "svchost.exe")
+
+    def test_quoted_path_with_space_and_args(self):
+        # 引号只包路径、参数在外面：不能因为路径里有空格就切坏
+        self.assertEqual(safety.exe_of('"C:\\Program Files\\X\\x.exe" --flag'), "x.exe")
+
+    def test_name_with_svchost_substring_kept_whole(self):
+        self.assertEqual(safety.exe_of(r"C:\Program Files\V\mysvchost.exe -run"), "mysvchost.exe")
 
 
 class TestSuspectPath(unittest.TestCase):

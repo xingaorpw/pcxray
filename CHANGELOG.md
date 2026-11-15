@@ -50,5 +50,10 @@
 - **英文 Windows 上打中文会崩溃。** 控制台代码页是 cp1252 时 `print` 中文
   抛 `UnicodeEncodeError`，整个命令直接断掉。现在启动时把代码页切到 UTF-8，
   并把 stdout 的编码换成 UTF-8 + `errors="replace"`。
+- **没加引号、路径带空格的命令行解析错。** `C:\Program Files\V\x.exe -run`
+  会被切成 `C:\Program`。改成按第一个 `.exe` 截断。整条命令行被引号包住的
+  情况（`"C:\Windows\system32\svchost.exe -k netsvcs"`）一并修好。
+- **一条测试用子串筛 svchost，把第三方 `mysvchost.exe` 也算进来了。**
+  改成按 exe 名字精确比较，并在断言失败时打印具体条目的命令行。
 
 [0.1.0]: https://github.com/xingaorpw/pcxray/releases/tag/v0.1.0

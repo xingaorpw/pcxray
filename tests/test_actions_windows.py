@@ -235,7 +235,9 @@ class TestRealScan(unittest.TestCase):
         entries, _problems = autostart.scan_services()
         if not entries:
             self.skipTest("读不到服务列表")
-        svchost_ones = [e for e in entries if "svchost.exe" in (e.command or "").lower()]
+        # 按 **exe 名字**筛，不按子串 —— `mysvchost.exe` 这种第三方程序名字里
+        # 也含 "svchost.exe"，用子串筛会把它误算进来，然后断言失败
+        svchost_ones = [e for e in entries if safety.exe_of(e.command) == "svchost.exe"]
         self.assertTrue(svchost_ones, "应该有跑在 svchost 里的服务")
         loose = [e for e in svchost_ones if not e.protected]
         # 失败时把出问题的那几条原样打出来 —— 只看到「False is not true」根本
