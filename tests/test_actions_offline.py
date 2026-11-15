@@ -361,6 +361,61 @@ class TestFolderItemInMoveMode(unittest.TestCase):
         self.assertIn("StartupApproved", plan["subkey"])
 
 
+class TestRestoreMalformedRecords(unittest.TestCase):
+    """备份可能是手改过的、写到一半断电的。
+
+    以前 `bytes.fromhex("zzz")` 直接把 ValueError 抛出去（一屏 traceback），
+    缺 `was_enabled` 时会替备份编一个「原本就是禁用状态」—— 它根本没记这件事。
+    """
+
+    def setUp(self):
+        self._dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._dir.cleanup)
+        patcher = mock.patch.object(actions, "BACKUP_DIR", self._dir.name)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _restore(self, op):
+        path = os.path.join(self._dir.name, "bad.json")
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump({"version": 1, "ops": [op]}, handle)
+        with mock.patch.object(actions, "_subkey_exists", return_value=True), mock.patch.object(
+            actions, "_value_exists", return_value=True
+        ), mock.patch.object(actions, "_write_value"), mock.patch.object(actions, "_read_value"):
+            return actions.restore(path)[0]
+
+    def test_bad_hex_is_a_clean_failure(self):
+        results = self._restore(
+            {
+                "kind": "flag",
+                "name": "X",
+                "hive": "HKCU",
+                "subkey": r"Software\Microsoft\Windows\CurrentVersion\Run",
+                "value_name": "X",
+                "existed": True,
+                "old": "zzz",
+            }
+        )
+        self.assertFalse(results[0].ok)
+        self.assertIn("不是合法的十六进制", results[0].message)
+
+    def test_missing_subkey_says_which_field(self):
+        results = self._restore({"kind": "flag", "name": "X"})
+        self.assertFalse(results[0].ok)
+        self.assertIn("缺 subkey", results[0].message)
+
+    def test_task_without_was_enabled_does_not_claim_it_was_disabled(self):
+        results = self._restore({"kind": "task", "name": "X", "task": "X"})
+        self.assertFalse(results[0].ok)
+        self.assertIn("缺 was_enabled", results[0].message)
+        self.assertNotIn("原本就是禁用", results[0].message)
+
+    def test_service_without_was_enabled_does_not_claim_it_was_manual(self):
+        results = self._restore({"kind": "service", "name": "X", "service": "X"})
+        self.assertFalse(results[0].ok)
+        self.assertIn("缺 was_enabled", results[0].message)
+
+
 class TestRestoreOldStyleMoveBackup(unittest.TestCase):
     """老备份里的 move 记的是「同一个键里改名」（没有 target_subkey）。
 

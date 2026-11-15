@@ -25,6 +25,10 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **坏掉的备份记录会让还原崩，或者替备份编事实。** `old` 字段不是合法十六进制时
+  `bytes.fromhex` 直接抛 ValueError（一屏 traceback）；缺 `subkey` 时提示是「这台机器
+  上没有这个注册表位置：」（空冒号）；task/service 记录缺 `was_enabled` 时会说
+  「原本就是禁用状态，未改动」—— 备份根本没记这件事。现在三种都报清楚缺什么。
 - **`--port 70000` / `--port -1` 甩出一屏 traceback。** 端口范围是可数的，现在先
   校验：退出 2，提示「--port 只能是 0–65535（0 = 让系统随便挑一个）」。
 - **旧版改名留下的 `~pcxray~原名` 条目没有任何提示。** 那些条目其实一直开着

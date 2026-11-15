@@ -736,6 +736,13 @@ def restore(path: str = "", dry_run: bool = False) -> tuple[list[Result], str]:
             results.append(Result(name, True, "（演练）将还原"))
             continue
         try:
+            if op.get("kind") in ("flag", "move") and (
+                not op.get("subkey") or not op.get("value_name", op.get("old_name"))
+            ):
+                # 缺字段就直说，别掉到下面的守卫里报一句「没有这个注册表位置：」——
+                # 那个空冒号后面的位置根本不存在
+                results.append(Result(name, False, "这条备份记录缺 subkey 或 value_name，没法还原"))
+                continue
             if (
                 op.get("kind") == "flag"
                 # 老值是字符串的时候照旧还原：那是「把用户原来的数据放回去」，
@@ -758,14 +765,22 @@ def restore(path: str = "", dry_run: bool = False) -> tuple[list[Result], str]:
                 )
                 continue
             if op["kind"] == "flag":
-                hive, subkey = op["hive"], op["subkey"]
+                hive, subkey = op.get("hive", ""), op["subkey"]
                 old_hex = op.get("old")
                 old_str = op.get("old_str")
                 if not op.get("existed"):
                     _delete_value(hive, subkey, op["value_name"])
                     results.append(Result(name, True, "已删除开关标记（恢复成默认启用）"))
                 elif old_hex is not None:
-                    _write_value(hive, subkey, op["value_name"], bytes.fromhex(old_hex))
+                    try:
+                        raw = bytes.fromhex(old_hex)
+                    except (TypeError, ValueError):
+                        # 手改过、或者写到一半断电：别让 fromhex 的异常打出一屏栈
+                        results.append(
+                            Result(name, False, f"备份里记的原值不是合法的十六进制：{old_hex!r}")
+                        )
+                        continue
+                    _write_value(hive, subkey, op["value_name"], raw)
                     # 还原也要读回来确认 —— 这是安全网，不能只喊一句「已还原」
                     got_ok, got, _k = _read_value(hive, subkey, op["value_name"])
                     if not got_ok or not isinstance(got, (bytes, bytearray)) or bytes(got).hex() != old_hex:
@@ -805,14 +820,19 @@ def restore(path: str = "", dry_run: bool = False) -> tuple[list[Result], str]:
                 else:
                     results.append(Result(name, True, "已放回原来的键"))
             elif op["kind"] == "task":
-                if op.get("was_enabled"):
-                    ok, message = _set_task(op.get("path", "\\"), op["task"], True)
+                if "was_enabled" not in op:
+                    # 缺字段时说「原本就是禁用状态」等于替备份编一个它没记的事实
+                    results.append(Result(name, False, "这条备份记录缺 was_enabled，没法还原"))
+                elif op.get("was_enabled"):
+                    ok, message = _set_task(op.get("path", "\\"), op.get("task", ""), True)
                     results.append(Result(name, ok, message))
                 else:
                     results.append(Result(name, True, "原本就是禁用状态，未改动"))
             elif op["kind"] == "service":
-                if op.get("was_enabled"):
-                    ok, message = _set_service(op["service"], True)
+                if "was_enabled" not in op:
+                    results.append(Result(name, False, "这条备份记录缺 was_enabled，没法还原"))
+                elif op.get("was_enabled"):
+                    ok, message = _set_service(op.get("service", ""), True)
                     results.append(Result(name, ok, message))
                 else:
                     results.append(Result(name, True, "原本就是手动启动，未改动"))
