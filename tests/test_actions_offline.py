@@ -259,6 +259,46 @@ class TestDescribe(unittest.TestCase):
         self.assertIn("自动", actions._describe({"kind": "service"}, True))
 
 
+class TestDescribeBackup(unittest.TestCase):
+    """列表里要能看出「哪份是刚才那次」。
+
+    只有一串 `20261115-032457.json` 时用户没法挑，还原错一份比不还原更糟。
+    """
+
+    def setUp(self):
+        self._dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._dir.cleanup)
+
+    def _write(self, payload):
+        path = os.path.join(self._dir.name, "b.json")
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle)
+        return path
+
+    def test_shows_time_and_count(self):
+        path = self._write({"created": "2026-11-15T03:24:57", "ops": [{}, {}, {}]})
+        when, count = actions.describe_backup(path)
+        self.assertEqual(when, "2026-11-15 03:24:57")
+        self.assertEqual(count, "3 项")
+
+    def test_missing_created_says_unknown(self):
+        when, count = actions.describe_backup(self._write({"ops": [{}]}))
+        self.assertEqual(when, "时间未知")
+        self.assertEqual(count, "1 项")
+
+    def test_broken_file_says_so(self):
+        path = os.path.join(self._dir.name, "bad.json")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("{not json")
+        when, count = actions.describe_backup(path)
+        self.assertEqual(when, "时间未知")
+        self.assertIn("读不出来", count)
+
+    def test_ops_not_a_list(self):
+        _when, count = actions.describe_backup(self._write({"created": "2026-11-15T03:24:57", "ops": "x"}))
+        self.assertIn("结构不对", count)
+
+
 class TestRestoreRejectsBadFiles(unittest.TestCase):
     """备份坏了要报错，不能打 traceback，也不能一声不响地退出 0。
 

@@ -496,6 +496,25 @@ def enable(items, force: bool = False, dry_run: bool = False, mode: str = MODE_F
     return _run(items, True, force, dry_run, mode)
 
 
+def describe_backup(path: str) -> tuple[str, str]:
+    """备份的「什么时候、改了几项」，读不出来就老实说不知道。
+
+    列表里只有一串 `20261115-032457.json`，用户没法判断哪份是刚才那次操作 ——
+    还原错一份比不还原更糟。
+    """
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return "时间未知", "内容读不出来"
+    created = payload.get("created") or ""
+    ops = payload.get("ops")
+    count = f"{len(ops)} 项" if isinstance(ops, list) else "结构不对"
+    if isinstance(created, str) and len(created) >= 19:
+        created = created[:19].replace("T", " ")
+    return created or "时间未知", count
+
+
 def restore(path: str = "", dry_run: bool = False) -> tuple[list[Result], str]:
     """按备份还原。path 为空时用最近的一份。"""
     if not path:

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 
 from . import __version__, actions, autostart, procs, report as report_mod, text, winapi
@@ -296,7 +297,10 @@ def _cmd_backups(args) -> int:
         return 0
     shown = backups if args.all else backups[:10]
     for path in shown:
-        print(f"  {path}")
+        # 只给路径没法挑：一堆 20261115-032457.json，谁知道哪份是刚才那次。
+        # 顺手把时间和「改了几项」带上，一眼就能找到要还原的那一份。
+        when, count = actions.describe_backup(path)
+        print(f"  {os.path.basename(path):26s} {when}  {count}")
     if len(backups) > len(shown):
         # 一次打印三百行没人看得完，也没法用。默认只给最近的 10 份。
         print(f"  …… 还有 {len(backups) - len(shown)} 份更早的，用 pcxray backups --all 看全部")
