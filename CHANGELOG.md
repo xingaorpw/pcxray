@@ -25,6 +25,16 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **`pcxray restore` 指到一个不是备份的 JSON，直接抛 traceback。**
+  `restore` 接受任意路径 —— 用户完全可能指到 `package.json`、手改过的文件、
+  或者写到一半断电的备份。顶层是列表 / null / 字符串 / 数字时，
+  `payload.get("ops")` 抛 `AttributeError: 'list' object has no attribute 'get'`。
+  实测 14 种畸形备份，4 种会崩；现在一律回一句「备份文件的结构不对，没法还原」。
+- **备份里的字段名对、类型不对，一样把注册表那层打崩。** `subkey` 写成列表时
+  `winreg.OpenKey` 抛 `TypeError: OpenKey() argument 'sub_key' must be str or
+  None, not list`。现在先把 `hive / subkey / value_name / old_name / name /
+  service / task` 不是文本的条目挑出来拒绝，并断言**一个写操作都没发生**。
+  反证过：去掉类型检查 → 1 个 TypeError + 4 条断言红。
 - **一条自启项都没有时，`list` 只打一个表头就没了。** 空机器（CI 的 runner
   就是这样）上用户看到一片空白，分不清「真的没有自启项」和「程序没干活」。
   现在会说「开机自启：没有条目」；`--kind service` 这类会指明是哪一类空；

@@ -457,6 +457,88 @@ class TestPruneSafety(unittest.TestCase):
         self.assertEqual((removed, left, freed), ([], 0, 0))
 
 
+class TestRestoreRejectsMalformedBackups(unittest.TestCase):
+    """备份文件是坏的（或根本不是备份）时，只能给一句话，不能抛异常。
+
+    `pcxray restore` 接受任意路径 —— 用户完全可能指到一个手改过的 JSON、
+    一个 package.json、或者写到一半断电的文件。以前顶层是列表或 null 时
+    这里会抛 `AttributeError: 'list' object has no attribute 'get'`，
+    用户拿到的是一屏 traceback。
+    """
+
+    CASES = {
+        "ops 是字符串": {"ops": "abc"},
+        "op 是 null": {"ops": [None]},
+        "op 缺字段": {"ops": [{"kind": "flag"}]},
+        "没有 ops": {},
+        "顶层是列表": [1, 2],
+        "顶层是 null": None,
+        "顶层是字符串": "hello",
+        "顶层是数字": 42,
+        "ops 是数字": {"ops": 5},
+        "ops 是对象": {"ops": {"a": 1}},
+        "op 是字符串": {"ops": ["flag"]},
+        "folder op 缺字段": {"ops": [{"kind": "folder"}]},
+        "move op 缺字段": {"ops": [{"kind": "move"}]},
+        "service op 缺字段": {"ops": [{"kind": "service"}]},
+    }
+
+    def test_every_broken_file_gets_a_message_not_a_traceback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "b.json")
+            for name, payload in self.CASES.items():
+                with self.subTest(case=name):
+                    with open(path, "w", encoding="utf-8") as handle:
+                        json.dump(payload, handle)
+                    results, _backup = actions.restore(path)
+                    self.assertTrue(results, f"{name}：一条结果都没有")
+                    self.assertFalse(results[0].ok, f"{name}：居然报成功了 —— {results[0].message}")
+                    self.assertTrue(results[0].message, f"{name}：失败却没说为什么")
+
+    TYPED_CASES = {
+        "hive 是数字": {"ops": [{"kind": "flag", "hive": 1, "subkey": "X", "value_name": "Y",
+                                 "existed": True, "old": "02"}]},
+        "subkey 是列表": {"ops": [{"kind": "flag", "hive": "HKCU", "subkey": ["X"],
+                                   "value_name": "Y"}]},
+        "value_name 是对象": {"ops": [{"kind": "flag", "hive": "HKCU", "subkey": "X",
+                                       "value_name": {"a": 1}}]},
+        "task 是数字": {"ops": [{"kind": "task", "name": "T", "task": 5}]},
+        "service 是列表": {"ops": [{"kind": "service", "name": "S", "service": ["a"],
+                                    "was_enabled": True}]},
+    }
+
+    def test_wrong_field_types_are_refused_without_touching_the_registry(self):
+        """字段名对、类型不对的备份也不能碰注册表。
+
+        `subkey` 写成列表时，`winreg.OpenKey` 抛的是
+        `TypeError: must be str or None, not list` —— 一屏 traceback。
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "b.json")
+            for name, payload in self.TYPED_CASES.items():
+                with self.subTest(case=name):
+                    with open(path, "w", encoding="utf-8") as handle:
+                        json.dump(payload, handle)
+                    with mock.patch.object(actions, "_write_value") as write, \
+                            mock.patch.object(actions, "_delete_value") as delete:
+                        results, _backup = actions.restore(path)
+                    self.assertTrue(results, f"{name}：一条结果都没有")
+                    self.assertFalse(results[0].ok, f"{name}：居然报成功了")
+                    self.assertIn("不是文本", results[0].message, results[0].message)
+                    write.assert_not_called()
+                    delete.assert_not_called()
+
+    def test_a_json_file_that_is_not_a_backup_is_named(self):
+        """指到一个不相干的 JSON（比如 package.json）时说清楚是结构不对。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "package.json")
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump({"name": "x", "version": "1.0.0"}, handle)
+            results, _backup = actions.restore(path)
+        self.assertFalse(results[0].ok)
+        self.assertIn("没有", results[0].message)
+
+
 class TestDescribe(unittest.TestCase):
     def test_flag(self):
         text = actions._describe({"kind": "flag", "subkey": "A\\B\\Run"}, False)

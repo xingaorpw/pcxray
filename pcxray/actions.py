@@ -771,6 +771,10 @@ def restore(path: str = "", dry_run: bool = False) -> tuple[list[Result], str]:
         return [Result("（还原）", False, f"读备份失败：{path}（{exc.strerror or exc}）")], path
     except json.JSONDecodeError:
         return [Result("（还原）", False, f"备份文件不是合法 JSON：{path}")], path
+    # 顶层不是对象也一样：`pcxray restore 随便一个.json` 就能把这里打到
+    # `'list' object has no attribute 'get'`，用户拿到的是一屏 traceback。
+    if not isinstance(payload, dict):
+        return [Result("（还原）", False, f"备份文件的结构不对，没法还原：{path}")], path
     ops = payload.get("ops") or []
     # 备份文件可能是坏的：手改过、写到一半断电、从别的机器拷来的。以前这里
     # 直接 `op.get(...)`，`{"ops": "x"}` 会抛 AttributeError 打出一屏 traceback；
@@ -788,7 +792,26 @@ def restore(path: str = "", dry_run: bool = False) -> tuple[list[Result], str]:
             Result("（还原）", True, f"这份备份标的是 v{version} 格式，这个版本只认 v1，可能读不全")
         )
     known = ("flag", "move", "task", "service")
-    usable = [op for op in ops if op.get("kind") in known]
+    # 字段名对但**类型**不对，一样会把这里打崩：手改过的备份里 `subkey` 写成
+    # 列表，`winreg.OpenKey` 直接抛 `TypeError: must be str or None, not list`。
+    # 类型不对的条目挑出来单独说，别拿它去碰注册表。
+    text_fields = ("hive", "subkey", "value_name", "old_name", "name", "service", "task")
+    typed_ok: list[dict] = []
+    for op in ops:
+        if op.get("kind") not in known:
+            continue
+        broken = [key for key in text_fields if key in op and not isinstance(op[key], str)]
+        if broken:
+            results.append(
+                Result(
+                    str(op.get("name") or "?"),
+                    False,
+                    f"这条备份记录的「{'、'.join(broken)}」不是文本，没法还原",
+                )
+            )
+            continue
+        typed_ok.append(op)
+    usable = typed_ok
     unknown = [op for op in ops if op.get("kind") not in known]
     if not usable:
         # 一条都认不出来就别报告「已还原」—— 用户会以为注册表回去了
