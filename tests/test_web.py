@@ -237,6 +237,43 @@ class TestReportApi(ServerCase):
         self.assertEqual(status, 200)
 
 
+class TestScanFailureStillAnswers(ServerCase):
+    """扫描炸了也必须回 JSON。
+
+    以前 `_snapshot` 抛异常会一路冒到 socketserver，连接被直接掐断 —— 浏览器
+    那边只看到 `TypeError: Failed to fetch`，用户完全不知道发生了什么。接口的
+    契约是「永远回 JSON」，异常也得翻译成 JSON。
+    """
+
+    def test_scan_exception_becomes_500_json(self):
+        with mock.patch.object(web, "_snapshot", side_effect=RuntimeError("扫描时炸了")):
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                urllib.request.urlopen(self.url("/api/report"), timeout=20)
+        self.assertEqual(caught.exception.code, 500)
+        body = json.loads(caught.exception.read().decode("utf-8"))
+        self.assertFalse(body["ok"])
+        self.assertIn("扫描时出错了", body["error"])
+        self.assertIn("扫描时炸了", body["error"], "原因要照抄，不能吞掉")
+
+    def test_action_exception_becomes_500_json(self):
+        with mock.patch.object(web.Handler, "_apply", side_effect=RuntimeError("改的时候炸了")):
+            request = urllib.request.Request(
+                self.url("/api/off"),
+                data=json.dumps({"keys": ["TestApp"]}).encode("utf-8"),
+                headers={
+                    "Content-Type": "application/json",
+                    "X-PCXRAY-Token": self.server.token,
+                    "Origin": f"http://127.0.0.1:{self.port}",
+                },
+                method="POST",
+            )
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                urllib.request.urlopen(request, timeout=20)
+        self.assertEqual(caught.exception.code, 500)
+        body = json.loads(caught.exception.read().decode("utf-8"))
+        self.assertIn("改的时候出错了", body["error"])
+
+
 class TestPostValidation(ServerCase):
     """坏请求一律 400，而且**不能**碰到 actions。"""
 

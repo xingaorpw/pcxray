@@ -260,7 +260,7 @@ def check_page_markup() -> None:
     check("页面里有脚本和样式", "<script>" in page and "<style>" in page)
 
 
-def _run_page_js(payload: dict, tail: str) -> dict | None:
+def _run_page_js(payload: dict, tail: str, fetch_js: str = "") -> dict | None:
     """把页面里那段 JS 放到 node 里跑，返回它 `console.log` 的 JSON。
 
     静态检查只能证明「`esc` 函数存在」，证明不了「每个插值都调了它」，也证明
@@ -279,7 +279,8 @@ def _run_page_js(payload: dict, tail: str) -> dict | None:
         "function el(id){if(!els[id])els[id]={innerHTML:'',textContent:'',"
         "classList:{add(){},remove(){}},onclick:null,dataset:{}};return els[id];}"
         "global.document={getElementById:el,querySelectorAll:()=>[]};"
-        "global.fetch=async()=>{throw new Error('不该发请求')};"
+        + ("global.fetch=" + fetch_js + ";" if fetch_js else "global.fetch=async()=>{throw new Error('不该发请求')};")
+        + 
         "global.confirm=()=>true;\n"
         + match.group(1)
         + "\nDATA = "
@@ -536,6 +537,43 @@ def check_autostart_reconciliation() -> None:
         print(f"  · 跳过自动服务对账（PowerShell 没给出数字：{svc_err.strip()[:60]}）")
 
 
+def check_page_js_reports_scan_failure() -> None:
+    """扫描失败时，页面必须说人话，而不是停在「正在扫描…」。
+
+    后端以前遇到异常直接掐断连接，浏览器只看到 `TypeError: Failed to fetch`。
+    现在后端回 500 + JSON，页面要把那句原因照抄出来。两条路都跑真 JS 验。
+    """
+    tail = (
+        ";setTimeout(()=>{console.log(JSON.stringify({sub:(els.sub||{}).textContent||\"\"}))},10);"
+    )
+    # 1) 服务器回了 500 + 原因
+    body = json.dumps({"ok": False, "error": "扫描时出错了：RuntimeError: 扫描时炸了"}, ensure_ascii=False)
+    got = _run_page_js(
+        {},
+        tail,
+        fetch_js="async()=>({ok:false,status:500,json:async()=>(" + body + ")})",
+    )
+    if got is None:
+        print("  · 跳过页面报错测试（没装 node）")
+        return
+    text = got.get("sub", "")
+    check("页面照抄服务器给的原因", "扫描时炸了" in text, f"页面显示的是：{text[:60]}")
+    check("页面没有停在「正在扫描」", "正在扫描" not in text, f"页面显示的是：{text[:60]}")
+
+    # 2) 后端直接断开（网络层失败）
+    got = _run_page_js(
+        {},
+        tail,
+        fetch_js="async()=>{throw new TypeError('Failed to fetch')}",
+    )
+    text = got.get("sub", "")
+    check(
+        "网络层失败也说人话",
+        "扫描失败" in text and "连不上本机的服务" in text and "Failed to fetch" not in text,
+        f"页面显示的是：{text[:60]}",
+    )
+
+
 def main() -> int:
     print("端到端自检")
     check_bad_arguments()
@@ -547,6 +585,7 @@ def main() -> int:
     check_no_handle_leak()
     check_json_contract()
     check_autostart_reconciliation()
+    check_page_js_reports_scan_failure()
     check_readme_test_count()
     check_python39_syntax()
     print()

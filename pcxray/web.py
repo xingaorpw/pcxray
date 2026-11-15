@@ -207,8 +207,20 @@ async function toggle(key,enabled,needsForce){
 async function load(force){
   try{
     const r=await fetch("/api/report"+(force?"?refresh=1":""));
-    DATA=await r.json(); draw();
-  }catch(e){ document.getElementById("sub").textContent="扫描失败："+e; }
+    let body;
+    try{ body=await r.json(); }
+    catch(_){ throw new Error("服务器回的不是 JSON（HTTP "+r.status+"）"); }
+    if(!r.ok||body.ok===false) throw new Error(body.error||("HTTP "+r.status));
+    DATA=body; draw();
+  }catch(e){
+    // fetch 自己在网络层失败时抛的是 TypeError，message 是
+    // 「Failed to fetch」/「NetworkError when attempting to fetch resource.」——
+    // 对用户毫无信息量。换成一句能照着做的。
+    const why=(e instanceof TypeError)
+      ? "连不上本机的服务（后端可能已经退出了，重新跑一次 pcxray web）"
+      : (e&&e.message?e.message:"连不上本机的服务");
+    document.getElementById("sub").textContent="扫描失败："+why;
+  }
 }
 document.querySelectorAll("[data-kind]").forEach(b=>b.onclick=()=>{
   document.querySelectorAll("[data-kind]").forEach(x=>x.classList.remove("on"));
@@ -297,7 +309,15 @@ class Handler(BaseHTTPRequestHandler):
             # 用 parse_qs 而不是字符串包含 —— "refresh=10" 里也有 "refresh=1"
             query = parse_qs(parsed.query or "")
             force = (query.get("refresh") or [""])[0] == "1"
-            self._json(200, _snapshot(force=force).as_dict())
+            # 扫描炸了也必须回话。以前这里没接异常，连接直接被掐断，浏览器只
+            # 看到一句 `TypeError: Failed to fetch` —— 用户完全不知道发生了什么。
+            # 接口的契约是「永远回 JSON」，异常也要翻译成 JSON。
+            try:
+                payload = _snapshot(force=force).as_dict()
+            except Exception as exc:  # noqa: BLE001 - 任何异常都要变成人话
+                self._json(500, {"ok": False, "error": f"扫描时出错了：{type(exc).__name__}: {exc}"})
+                return
+            self._json(200, payload)
             return
         self._json(404, {"ok": False, "error": "没有这个地址"})
 
@@ -324,6 +344,12 @@ class Handler(BaseHTTPRequestHandler):
         # 改状态这一段必须在锁里：不然会出现「改完了，页面还是旧的」——
         # 一次并发的刷新可能正好在写之前扫完，把旧结果写进缓存，而我们的
         # 作废标记在那之前就被覆盖掉了。
+        try:
+            self._apply(keys, turn_on, force)
+        except Exception as exc:  # noqa: BLE001 - 同上：异常也要翻译成 JSON
+            self._json(500, {"ok": False, "error": f"改的时候出错了：{type(exc).__name__}: {exc}"})
+
+    def _apply(self, keys: list, turn_on: bool, force: bool) -> None:
         with _LOCK:
             entries = _STATE["entries"] or []
             picked = [e for e in entries if e.key in keys]

@@ -25,6 +25,14 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **网页的扫描一炸，页面就只剩「扫描失败：TypeError: Failed to fetch」。** 后端
+  `/api/report` 里没有接异常，`_snapshot` 一抛，连接被 socketserver 直接掐断，
+  浏览器拿到的不是 500 而是「对面挂了」。用户看到 `Failed to fetch` 完全不知道
+  该干什么。现在后端把异常翻译成 `500 {"ok": false, "error": "扫描时出错了：…"}`，
+  页面照抄那句原因；`fetch` 自己在网络层失败（后端已退出）时换成
+  「连不上本机的服务（后端可能已经退出了，重新跑一次 pcxray web）」。
+  `/api/off`、`/api/on` 同样包了一层。反证过：去掉那层 `try`，测试立刻报
+  `RemoteDisconnected`。
 - **计划任务的关闭路径补了端到端证据。** 之前只有单元测试（读回状态对不上要报
   失败），没在真系统上走过一遍。这次建了一条登录触发的任务实测：`off` 之后
   `Get-ScheduledTask` 的状态真的从 `Ready` 变成 `Disabled`，列表里 `enabled`
