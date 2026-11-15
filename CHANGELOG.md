@@ -25,6 +25,12 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **「零依赖」是徽章上的承诺，以前没人检查过。** 要是哪天顺手
+  `import requests`，本地跑得好好的（这台机器装了），用户那边直接
+  ImportError。现在 ci_checks 用 `ast` 把 `pcxray/` 里所有 import 抠出来，
+  逐个查它落在标准库还是 site-packages：既抓「引了第三方」，也抓「引了装都
+  没装的模块」。反证过两次：塞一句 `import requests` → 「这些不是标准库：
+  requests（第三方）」；塞一个不存在的模块 → 「not_a_real_module_xyz（找不到）」。
 - **README 里写的选项和子命令，命令行认不认，以前没人对过。** 代码里删一个
   选项、README 还留着，用户复制粘贴得到一句 `unrecognized arguments`，而
   测试全绿 —— 因为测试不读 README。现在 ci_checks 直接问 argparse：

@@ -1213,6 +1213,47 @@ def check_readme_options_exist() -> None:
     )
 
 
+def check_no_third_party_imports() -> None:
+    """`pcxray/` 里不许 import 任何第三方库 —— README 的「零依赖」徽章是承诺。
+
+    这个徽章是给人看的卖点：装上就能跑，不用 pip install。要是哪天顺手
+    `import requests`，本地跑得好好的（机器上装了），用户那边直接 ImportError。
+    """
+    import ast
+    import importlib.util
+
+    stdlib = getattr(sys, "stdlib_module_names", None)
+    # 只有 Windows 才有的标准库：Linux/macOS 上 find_spec 找不到，但它们是标准库
+    platform_stdlib = {"winreg", "msvcrt", "winsound", "_winapi", "nt", "win32api"}
+    modules: set[str] = set()
+    for path in sorted(glob.glob("pcxray/*.py")):
+        with open(path, encoding="utf-8") as handle:
+            tree = ast.parse(handle.read(), filename=path)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                modules.update(alias.name.split(".")[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                modules.add(node.module.split(".")[0])
+    bad: list[str] = []
+    for name in sorted(modules):
+        if name == "__future__" or name in platform_stdlib:
+            continue
+        if stdlib is not None and name in stdlib:
+            continue
+        spec = importlib.util.find_spec(name)
+        if spec is None:
+            bad.append(f"{name}（找不到）")
+            continue
+        origin = spec.origin or ""
+        if "site-packages" in origin or "dist-packages" in origin:
+            bad.append(f"{name}（第三方）")
+    check(
+        "pcxray 只用标准库",
+        not bad,
+        "" if not bad else "这些不是标准库：" + "、".join(bad[:5]),
+    )
+
+
 def main() -> int:
     print("端到端自检")
     # 先记下这台机器现在的样子，最后再比一遍
@@ -1240,6 +1281,7 @@ def main() -> int:
     check_dry_run_writes_nothing()
     check_readme_test_count()
     check_readme_options_exist()
+    check_no_third_party_imports()
     check_python39_syntax()
     # 自检自己在真机器上写注册表（建探针、挪走、再删掉）。跑完必须和跑之前
     # 一模一样 —— 否则「自检」本身就成了污染源（真发生过：dry_run 被短路时
