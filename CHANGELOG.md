@@ -25,6 +25,14 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **连上不说话的连接会永远占着一条线程。** `BaseHTTPRequestHandler.timeout`
+  默认是 None —— 也就是永远等下去。实测：开 10 个空连接，8 秒后**一个都没**
+  被服务端关掉。浏览器关标签页、进程被强杀都会留下这种半死的连接，每一条
+  永久占一条线程。现在 `Handler.timeout = 30`（够覆盖浏览器正常的 keep-alive），
+  实测把超时缩到 1 秒时，3 条空闲连接全部被服务端关掉。加了两条测试：
+  一条验「空闲连接会被关」（把超时临时调成 1 秒），一条验「真实超时值必须是
+  有限正数」—— 后者是反证的关键：把 `timeout` 改回 None，它立刻报
+  `unexpectedly None`。
 - **「零依赖」是徽章上的承诺，以前没人检查过。** 要是哪天顺手
   `import requests`，本地跑得好好的（这台机器装了），用户那边直接
   ImportError。现在 ci_checks 用 `ast` 把 `pcxray/` 里所有 import 抠出来，

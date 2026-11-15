@@ -236,6 +236,11 @@ load(false);
 class Handler(BaseHTTPRequestHandler):
     server_version = "pcxray/" + __version__
     protocol_version = "HTTP/1.1"
+    # 连接空闲多久就关掉。不设的话 `timeout` 是 None —— 一个连上就不说话的
+    # 客户端会把一条线程永远占着（实测：开 10 个空连接，8 秒后一个都没被
+    # 服务端关掉）。浏览器关标签页、进程被强杀都会留下这种半死的连接。
+    # 30 秒足够覆盖浏览器正常的 keep-alive，也不会让线程无限堆积。
+    timeout = 30
 
     def log_message(self, fmt, *args):  # 不要往终端刷访问日志
         return

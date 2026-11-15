@@ -8,7 +8,9 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import socket
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -200,6 +202,51 @@ class ServerCase(unittest.TestCase):
                 return response.status, json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             return exc.code, json.loads(exc.read().decode("utf-8"))
+
+
+class TestIdleConnectionsDoNotPileUp(ServerCase):
+    """连上不说话的客户端不能永远占着一条线程。
+
+    `BaseHTTPRequestHandler.timeout` 默认是 None —— 也就是永远等下去。浏览器
+    关标签页、进程被强杀都会留下半死的连接，每一条都占一条线程，而且永远不
+    释放。实测过：开 10 个空连接，8 秒后一个都没被服务端关掉。
+    """
+
+    def test_idle_socket_is_closed_once_the_timeout_passes(self):
+        sockets = []
+        try:
+            with mock.patch.object(web.Handler, "timeout", 1):
+                for _ in range(3):
+                    sockets.append(socket.create_connection(("127.0.0.1", self.port), timeout=5))
+                # 什么都不发，等服务端自己关
+                deadline = time.time() + 5
+                closed = 0
+                while time.time() < deadline and closed < len(sockets):
+                    closed = 0
+                    for sock in sockets:
+                        sock.settimeout(0.2)
+                        try:
+                            if sock.recv(1) == b"":
+                                closed += 1
+                        except socket.timeout:
+                            pass
+                        except OSError:
+                            closed += 1
+                    if closed < len(sockets):
+                        time.sleep(0.2)
+            self.assertEqual(closed, len(sockets), f"只有 {closed}/{len(sockets)} 条空闲连接被关掉了")
+        finally:
+            for sock in sockets:
+                try:
+                    sock.close()
+                except OSError:
+                    pass
+
+    def test_handler_has_a_finite_timeout(self):
+        # 真值不许是 None：None 就是「永远等」
+        self.assertIsNotNone(web.Handler.timeout)
+        self.assertGreater(web.Handler.timeout, 0)
+        self.assertLessEqual(web.Handler.timeout, 120)
 
 
 class TestPage(ServerCase):
