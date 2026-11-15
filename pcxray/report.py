@@ -350,7 +350,10 @@ def render(report: Report, limit: int = 0, only: str = "") -> list[str]:
         shown = [i for i in report.items if i.entry.kind in quick]
         rest = [i for i in report.items if i.entry.kind not in quick]
 
-    if limit:
+    hidden_by_limit = 0
+    if limit and len(shown) > limit:
+        # 截断了就必须说，否则用户看到 3 行会以为「这一类就 3 条」
+        hidden_by_limit = len(shown) - limit
         shown = shown[:limit]
     if shown:
         rows = []
@@ -390,6 +393,11 @@ def render(report: Report, limit: int = 0, only: str = "") -> list[str]:
                 limits=[6, 46, 14, 18, 28],
             )
         )
+        if hidden_by_limit:
+            lines.append(
+                f"  · 只显示了前 {len(shown)} 条，还有 {hidden_by_limit} 条没显示"
+                f"（--limit 0 看全部）"
+            )
         lines.append("")
 
     # ---- 其余来源只给计数

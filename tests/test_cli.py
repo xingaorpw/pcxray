@@ -128,6 +128,38 @@ class TestParser(unittest.TestCase):
         self.assertEqual(args.include, "registry,folders")
 
 
+class TestTruncationIsDisclosed(unittest.TestCase):
+    """截断必须说出来。
+
+    `--limit 3` 只给 3 行、不提还有多少条，用户会以为「这一类就 3 条」。
+    """
+
+    def _run(self, argv):
+        with quiet_stdout() as buffer:
+            code = cli.main(argv)
+        self.assertEqual(code, 0)
+        return buffer.getvalue()
+
+    def test_list_says_how_many_are_hidden(self):
+        out = self._run(["list", "--limit", "2"])
+        self.assertIn("只显示了前 2 条", out)
+        self.assertIn("--limit 0", out)
+
+    def test_list_limit_zero_says_nothing_about_truncation(self):
+        self.assertNotIn("只显示了前", self._run(["list", "--limit", "0"]))
+
+    def test_ram_says_how_many_are_hidden(self):
+        self.assertIn("只显示了占内存最多的 2 个程序", self._run(["ram", "--limit", "2"]))
+
+    def test_ram_limit_zero_really_means_all(self):
+        """`--limit 0` 在两条命令里必须同一个意思：全部。
+
+        以前 ram 用 `args.limit or 25`，0 被当成「没写」，只显示 25 行，
+        还反过来劝用户「用 --limit 0 看全部」—— 用户照做也没用。
+        """
+        self.assertNotIn("只显示了", self._run(["ram", "--limit", "0"]))
+
+
 class TestListArgumentValidation(unittest.TestCase):
     """坏参数要当场报错。
 

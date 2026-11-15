@@ -172,7 +172,13 @@ def _cmd_ram(args) -> int:
         )
         print("")
     rows = []
-    for item in groups[: args.limit or 25]:
+    # --limit 的语义在两条命令里必须一致：0 = 全部。ram 不传时的默认 25 由
+    # 子命令的 default 给出（见 build_parser），不能在这里用 `or 25` —— 那会把
+    # 用户明确写的 0 也当成「没写」，于是 --limit 0 只显示 25 行，还反过来劝
+    # 用户「用 --limit 0 看全部」。
+    cap = args.limit or len(groups)
+    shown_groups = groups[:cap]
+    for item in shown_groups:
         rows.append(
             [
                 item.name,
@@ -191,6 +197,12 @@ def _cmd_ram(args) -> int:
     ):
         print("  " + line)
     print("")
+    if len(groups) > len(shown_groups):
+        # 截断了就要说。只给 3 行又不说，用户会以为这台机器就 3 个程序在占内存
+        print(
+            f"  · 只显示了占内存最多的 {len(shown_groups)} 个程序，"
+            f"还有 {len(groups) - len(shown_groups)} 个没显示（--limit 0 看全部）"
+        )
     print("  「占用」= 工作集，和任务管理器那一列一致")
     print("  「提交」= 已申请的内存，含被换到页面文件的部分，可能比占用大好几倍")
     if winapi.COVERAGE["mode"] != "all":
@@ -307,6 +319,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_ram = sub.add_parser("ram", help="看谁在后台占内存")
     common(p_ram)
+    # ram 默认只看前 25 个（一屏能看完），list 默认全给
+    p_ram.set_defaults(limit=25)
     p_ram.set_defaults(func=_cmd_ram)
 
     p_off = sub.add_parser("off", help="关掉自启（会先备份）")

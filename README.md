@@ -1,7 +1,7 @@
 # pcxray
 
 [![CI](https://github.com/xingaorpw/pcxray/actions/workflows/ci.yml/badge.svg)](https://github.com/xingaorpw/pcxray/actions/workflows/ci.yml)
-[![tests](https://img.shields.io/badge/tests-349%20passed-brightgreen)](https://github.com/xingaorpw/pcxray/tree/main/tests)
+[![tests](https://img.shields.io/badge/tests-353%20passed-brightgreen)](https://github.com/xingaorpw/pcxray/tree/main/tests)
 [![python](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/downloads/)
 [![deps](https://img.shields.io/badge/dependencies-0-brightgreen)](https://github.com/xingaorpw/pcxray/blob/main/pyproject.toml)
 [![license](https://img.shields.io/badge/license-MIT-blue)](https://github.com/xingaorpw/pcxray/blob/main/LICENSE)
@@ -205,6 +205,8 @@ python -m pcxray web
 
 浏览器打开 `http://127.0.0.1:<随机端口>/`，能筛、能搜、能一条条点。只绑 `127.0.0.1`，不对外网开放。
 
+网页里**只能关和开，不能还原**——每次操作后它会打出备份文件的完整路径，还原用命令行那条 `pcxray restore`。这样设计是因为还原会动系统，留在命令行里你至少能看到它写了什么。
+
 ### 其它
 
 ```bash
@@ -248,7 +250,7 @@ python -m pcxray off 名字 --force       # 允许改服务（默认只给建议
 ## 开发
 
 ```bash
-python -m unittest discover -s tests -t .     # 349 个测试
+python -m unittest discover -s tests -t .     # 353 个测试
 ```
 
 测试分两类：不依赖 Windows 的逻辑（命令行解析、开关状态解码、内存分组、表格排版、网页接口）在 Linux 上也能跑；真正读写注册表的端到端测试只在 Windows 上跑（`skipUnless`）。CI 两边都跑。

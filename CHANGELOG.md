@@ -25,6 +25,13 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **截断不吭声。** `list --limit 3` 只给 3 行，不提还有 20 条，用户会以为
+  「注册表里就 3 条自启」；`ram --limit 3` 同理。现在两个都会写「只显示了前 N 条，
+  还有 M 条没显示」。
+- **`ram --limit 0` 不是「全部」，是「25」。** 因为代码写的是 `args.limit or 25`，
+  用户明确写的 0 被当成「没写」，于是只显示 25 行，还反过来劝用户「用 --limit 0
+  看全部」—— 照做也没用。现在两条命令的 `--limit 0` 统一表示全部，ram 不传时的
+  默认 25 由子命令自己的 default 给出。
 - **`--mode move` 会悄悄覆盖掉同名的自启项。** 改名时目标名如果已经有值，
   Windows 直接覆盖，工具还返回「已改名为 …」—— 用户的一条自启项就这么没了，
   事后完全看不出来，而 README 里写着「不删你的东西」。现在目标名已存在就停下
