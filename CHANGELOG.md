@@ -25,6 +25,11 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **`--kind` 的每一类也逐项对账了。** 六类加起来正好等于全量（16+0+6+1+46+114
+  = 183），现在这条也进了 ci_checks：`run` / `run32` / `runonce` 拿 winreg 直接
+  数出来的值个数当基准，`folder` 拿 `os.listdir`，`task` / `service` 拿 CIM。
+  反证过：让 `--kind run` 把 runonce 也混进来，立刻报「报了 22 条，系统里这一类
+  有 16 条」。
 - **`--include` 的条数没人对过账。** 现在 `ci_checks` 会把 `--include registry` /
   `--include folders` 的条数和**系统侧**的真实个数比（winreg 直接读值、
   `os.listdir` 直接数文件），不是拿扫描结果自比。实测 22 / 1，四个来源加起来

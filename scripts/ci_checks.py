@@ -478,14 +478,17 @@ def check_autostart_reconciliation() -> None:
         for middle in ("Software", r"Software\WOW6432Node"):
             for leaf in ("Run", "RunOnce"):
                 canonical.append((hive, middle + "\\Microsoft\\Windows\\CurrentVersion\\" + leaf))
-    scanned = {(hive, subkey): label for hive, subkey, _s, _k, label in autostart.RUN_KEYS}
+    scanned = {(hive, subkey): (label, kind) for hive, subkey, _s, kind, label in autostart.RUN_KEYS}
     raw_registry_total = 0  # 系统里实际有多少个值（规格侧的基准）
     registry_skipped = 0  # 其中不是字符串、Windows 不会执行的
+    raw_by_kind: dict[str, int] = {}
+    skipped_by_kind: dict[str, int] = {}
     for hive_name, subkey in canonical:
-        label = scanned.get((hive_name, subkey))
-        if not label:
+        found = scanned.get((hive_name, subkey))
+        if not found:
             check(f"注册表对账 · {hive_name}\\{subkey}", False, "这个位置没扫")
             continue
+        label, kind = found
         try:
             with winreg.OpenKey(hives[hive_name], subkey) as handle:
                 raw, index = set(), 0
@@ -510,6 +513,8 @@ def check_autostart_reconciliation() -> None:
         # 不能用扫描结果自己算 —— 扫描漏了什么，两边会一起少（试过）。
         raw_registry_total += len(raw)
         registry_skipped += len(missing) - len(unexplained)
+        raw_by_kind[kind] = raw_by_kind.get(kind, 0) + len(raw)
+        skipped_by_kind[kind] = skipped_by_kind.get(kind, 0) + len(missing) - len(unexplained)
 
     # ---- 启动文件夹
     raw_folder_total = 0
@@ -530,6 +535,35 @@ def check_autostart_reconciliation() -> None:
         "registry": raw_registry_total - registry_skipped,
         "folders": raw_folder_total,
     }
+    # --kind 的每一类也要对得上：注册表三类拿系统侧的值个数当基准，
+    # 文件夹拿 os.listdir 的个数，计划任务和服务上面已经和 CIM 对过账。
+    kind_expect = {
+        "run": raw_by_kind.get("run", 0) - skipped_by_kind.get("run", 0),
+        "run32": raw_by_kind.get("run32", 0) - skipped_by_kind.get("run32", 0),
+        "runonce": raw_by_kind.get("runonce", 0) - skipped_by_kind.get("runonce", 0),
+        "folder": raw_folder_total,
+    }
+    for kind, want in kind_expect.items():
+        done = subprocess.run(
+            [sys.executable, "-m", "pcxray", "list", "--json", "--limit", "0", "--kind", kind],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        if done.returncode != 0:
+            check(f"--kind {kind} 能跑", False, done.stderr[-160:])
+            continue
+        try:
+            got = json.loads(done.stdout)["autostart"]["total"]
+        except (json.JSONDecodeError, KeyError) as exc:
+            check(f"--kind {kind} 是合法 JSON", False, str(exc)[:120])
+            continue
+        check(
+            f"--kind {kind} 条数对得上",
+            got == want,
+            f"报了 {got} 条，系统里这一类有 {want} 条" if got != want else f"{got} 条",
+        )
+
     for include in ("registry", "folders"):
         done = subprocess.run(
             [sys.executable, "-m", "pcxray", "list", "--json", "--limit", "0", "--include", include],
