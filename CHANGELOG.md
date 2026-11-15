@@ -25,6 +25,14 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **启动文件夹的项关掉之后，`restore` 什么也不做还骗你「已经不在了」。** 备份
+  记录里文件夹项的 `target_subkey` 是 `StartupFolder` —— 那是 `StartupApproved`
+  的栏名，不是注册表路径。还原时的「这条还在不在」一律拿它去 `HKCU\StartupFolder`
+  查值，当然查不到，于是报「这一条已经不在了，跳过」，开关标记永远删不掉。
+  实测：建一个 `pcxray_selftest_folder.lnk` → `off`（`StartupApproved` 变
+  `03…`）→ `restore` → 还是 `03…`，报「已经不在了」。现在文件夹项按**文件**
+  判断在不在，`restore` 输出「已还原开关标记」，标记回到原来的 `02…`。
+  反证过：把判定改回一律查注册表，三条测试立刻红一条。
 - **`--kind` 的每一类也逐项对账了。** 六类加起来正好等于全量（16+0+6+1+46+114
   = 183），现在这条也进了 ci_checks：`run` / `run32` / `runonce` 拿 winreg 直接
   数出来的值个数当基准，`folder` 拿 `os.listdir`，`task` / `service` 拿 CIM。

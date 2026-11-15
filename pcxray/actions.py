@@ -667,6 +667,28 @@ def _backup_is_usable(path: str) -> bool:
     return all(isinstance(op, dict) for op in ops)
 
 
+def _item_still_there(op: dict) -> bool:
+    """这条自启项本身还在不在。
+
+    注册表项看 `Run` 那个键里还有没有这个值；**启动文件夹项看那个文件还在不在**。
+
+    以前这里一律拿 `target_subkey` 去查注册表，而文件夹项记的 `target_subkey`
+    是 `StartupFolder` 这个短名字（那是 `StartupApproved` 的栏名，不是注册表
+    路径）。`HKCU\StartupFolder` 当然不存在，于是每一次 `restore` 一条启动
+    文件夹的项都报「这一条已经不在了，跳过」，开关标记永远删不掉 —— 实测过。
+    """
+    target = op.get("target_subkey") or ""
+    name = op.get("value_name") or ""
+    if target == "StartupFolder" or (op.get("subkey") or "").endswith("\\StartupFolder"):
+        from . import autostart
+
+        return any(
+            os.path.isfile(os.path.join(folder, name))
+            for _scope, folder, _label in autostart._startup_dirs()
+        )
+    return _value_exists(op.get("hive", ""), target, name)
+
+
 def restore(path: str = "", dry_run: bool = False) -> tuple[list[Result], str]:
     """按备份还原。path 为空时用最近的一份。"""
     skipped: list[str] = []
@@ -767,7 +789,7 @@ def restore(path: str = "", dry_run: bool = False) -> tuple[list[Result], str]:
                 # 不是我们写的那种开关标记，不能因为自启项没了就把它丢掉。
                 and op.get("old_str") is None
                 and op.get("target_subkey")
-                and not _value_exists(op.get("hive", ""), op["target_subkey"], op.get("value_name", ""))
+                and not _item_still_there(op)
             ):
                 # 自启项已经被删了（用户自己删的、卸载程序清掉的）。再往
                 # StartupApproved 里写一个标记，只会在注册表里留一条谁都看不见的

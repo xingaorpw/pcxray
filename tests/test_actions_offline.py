@@ -361,6 +361,57 @@ class TestFolderItemInMoveMode(unittest.TestCase):
         self.assertIn("StartupApproved", plan["subkey"])
 
 
+class TestFolderItemIsFoundByFileNotRegistry(unittest.TestCase):
+    """启动文件夹的项在不在，要看那个文件在不在。
+
+    备份记录里文件夹项的 `target_subkey` 是 `StartupFolder` —— 那是
+    `StartupApproved` 的栏名，不是注册表路径。以前一律拿它去 `HKCU\StartupFolder`
+    查值，查不到就报「这一条已经不在了，跳过」，于是**每一次** restore 一条
+    启动文件夹的项都什么也没做，开关标记永远删不掉。实测过。
+    """
+
+    def _op(self, name: str) -> dict:
+        return {
+            "kind": "flag",
+            "hive": "HKCU",
+            "subkey": r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder",
+            "value_name": name,
+            "target_subkey": "StartupFolder",
+            "old": "020000000000000000000000",
+            "old_str": None,
+        }
+
+    def test_shortcut_still_there_counts_as_present(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, "有.lnk"), "w", encoding="utf-8") as handle:
+                handle.write("x")
+            with mock.patch.object(
+                actions.autostart, "_startup_dirs", return_value=[("user", tmp, "启动文件夹 · 当前用户")]
+            ):
+                self.assertTrue(actions._item_still_there(self._op("有.lnk")))
+
+    def test_shortcut_gone_counts_as_gone(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(
+                actions.autostart, "_startup_dirs", return_value=[("user", tmp, "启动文件夹 · 当前用户")]
+            ):
+                self.assertFalse(actions._item_still_there(self._op("没有.lnk")))
+
+    def test_registry_items_still_use_the_value_check(self):
+        op = {
+            "kind": "flag",
+            "hive": "HKCU",
+            "subkey": r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run",
+            "value_name": "X",
+            "target_subkey": r"Software\Microsoft\Windows\CurrentVersion\Run",
+            "old": None,
+            "old_str": None,
+        }
+        with mock.patch.object(actions, "_value_exists", return_value=True) as spy:
+            self.assertTrue(actions._item_still_there(op))
+        spy.assert_called_once_with("HKCU", r"Software\Microsoft\Windows\CurrentVersion\Run", "X")
+
+
 class TestRestoreGivenADirectory(unittest.TestCase):
     """传目录进来时说清楚是目录，不要报成「Permission denied」。
 
