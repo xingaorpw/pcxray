@@ -863,6 +863,137 @@ def check_move_mode_round_trip() -> None:
                 pass
 
 
+def check_flag_mode_off_restore_round_trip() -> None:
+    r"""默认模式（写 StartupApproved 标记）的「关掉 → 反悔 → 还原」端到端跑一遍。
+
+    这是产品对用户说的那句话：「反悔就运行 pcxray restore ...」。以前验过
+    各分支（备份里存了什么、还原时怎么读），但没验过**真机器上跑一遍之后
+    开关真的回到原样**。两种起点都要验：
+
+    - 这条从来没有过标记（最常见）→ 还原之后标记必须消失
+    - 这条本来就有一个「明确启用」的标记（`02` 开头）→ 还原之后必须是
+      **原来那串字节**，不是「删掉」。删掉和恢复成原值不是一回事：删掉之后
+      Windows 会退回到默认策略，而用户原本明确启用过。
+
+    全程用临时 HOME，不碰用户真实备份。
+    """
+    import tempfile
+    import winreg
+
+    from pcxray import winapi
+
+    if not winapi.IS_WINDOWS:
+        print("  · 跳过标记模式往返（不是 Windows）")
+        return
+
+    name = "pcxray_selftest_undo"
+    base = r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Run"
+    approved = (
+        r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run32"
+    )
+
+    def read_approved():
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, approved) as handle:
+                return winreg.QueryValueEx(handle, name)[0]
+        except FileNotFoundError:
+            return None
+
+    def set_approved(data) -> None:
+        with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, approved, 0, winreg.KEY_SET_VALUE) as handle:
+            if data is None:
+                try:
+                    winreg.DeleteValue(handle, name)
+                except FileNotFoundError:
+                    pass
+            else:
+                winreg.SetValueEx(handle, name, 0, winreg.REG_BINARY, data)
+
+    def run_cli(args, home):
+        env = dict(os.environ)
+        env["USERPROFILE"] = home
+        env["HOME"] = home
+        env["PYTHONIOENCODING"] = "utf-8"
+        done = subprocess.run(
+            [sys.executable, "-m", "pcxray"] + list(args),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            env=env,
+            timeout=300,
+        )
+        return done.returncode, done.stdout + done.stderr
+
+    def one_case(label: str, original) -> None:
+        """original = 这条原来的标记（None 表示从来没有过）。"""
+        set_approved(original)
+        with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, base) as handle:
+            winreg.SetValueEx(handle, name, 0, winreg.REG_SZ, r"C:\Windows\SysWOW64\notepad.exe")
+        try:
+            with tempfile.TemporaryDirectory() as home:
+                code, out = run_cli(["off", name], home)
+                check(f"{label}：off 成功", code == 0, out.strip()[-140:] if code else "")
+                after = read_approved()
+                turned_off = isinstance(after, (bytes, bytearray)) and bytes(after)[:1] in (
+                    b"\x03",
+                    b"\x04",
+                )
+                check(
+                    f"{label}：标记变成「关」",
+                    turned_off,
+                    "" if turned_off else f"标记是 {after!r}",
+                )
+                # 备份文件必须真的落在临时 HOME 里，而且只有一份
+                backups = os.path.join(home, ".pcxray", "backup")
+                made = sorted(os.listdir(backups)) if os.path.isdir(backups) else []
+                check(f"{label}：留下了一份备份", len(made) == 1, f"备份目录里有 {made}")
+                if len(made) != 1:
+                    return
+                backup = os.path.join(backups, made[0])
+                check(
+                    f"{label}：输出里给了可复制的还原命令",
+                    backup in out,
+                    "" if backup in out else "输出里没出现备份路径",
+                )
+                code, out = run_cli(["restore", backup], home)
+                check(f"{label}：restore 成功", code == 0, out.strip()[-140:] if code else "")
+                back = read_approved()
+                if original is None:
+                    check(
+                        f"{label}：还原之后标记消失",
+                        back is None,
+                        "" if back is None else f"还留着 {back!r}",
+                    )
+                else:
+                    now = bytes(back).hex() if isinstance(back, (bytes, bytearray)) else repr(back)
+                    check(
+                        f"{label}：还原之后是原来那串字节",
+                        bytes(back or b"") == bytes(original),
+                        f"原来是 {bytes(original).hex()}，现在是 {now}",
+                    )
+                # 自启项本身全程不该被动过
+                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, base) as handle:
+                    still = winreg.QueryValueEx(handle, name)[0]
+                check(
+                    f"{label}：Run 里的值自始至终没变",
+                    still == r"C:\Windows\SysWOW64\notepad.exe",
+                    "" if still == r"C:\Windows\SysWOW64\notepad.exe" else repr(still),
+                )
+        finally:
+            for subkey in (base, base + "-pcxray-disabled"):
+                try:
+                    with winreg.OpenKey(
+                        winreg.HKEY_CURRENT_USER, subkey, 0, winreg.KEY_SET_VALUE
+                    ) as handle:
+                        winreg.DeleteValue(handle, name)
+                except OSError:
+                    pass
+            set_approved(None)
+
+    one_case("从来没有过标记", None)
+    one_case("本来就有「明确启用」标记", b"\x02" + b"\x00" * 11)
+
+
 def check_no_syntax_warnings() -> None:
     r"""所有模块都不许有 SyntaxWarning。
 
@@ -1584,6 +1715,7 @@ def main() -> int:
     check_json_memory_keys()
     check_json_timestamps()
     check_move_mode_round_trip()
+    check_flag_mode_off_restore_round_trip()
     check_no_syntax_warnings()
     check_page_reads_only_real_fields()
     check_autostart_memory_is_deduped()
