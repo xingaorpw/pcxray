@@ -437,6 +437,105 @@ def check_python39_syntax() -> None:
     check("没有 3.12 才允许的 f-string 写法", not hits, "、".join(hits[:3]))
 
 
+def check_autostart_reconciliation() -> None:
+    """pcxray 报的条数，必须和系统自己数出来的一致。
+
+    这是「一次看全」这句话的唯一硬证据。不比对的话，漏掉一整块（比如 HKCU 的
+    32 位 Run）谁也不会发现 —— 界面上就是少几行，看起来和「这台机器本来就没有」
+    一模一样。四个来源各自对账：
+
+    - 注册表：8 个位置逐个读值，按来源标签比名字集合
+    - 启动文件夹：`os.listdir` 比名字集合
+    - 计划任务：`Get-ScheduledTask` 里有登录/开机触发的条数
+    - 服务：`Win32_Service` 里 `StartMode=Auto` 的条数
+
+    非 Windows 上直接跳过（这些来源本来就不存在）。
+    """
+    import winreg
+
+    from pcxray import autostart, pwsh, winapi
+
+    if not winapi.IS_WINDOWS:
+        print("  · 跳过自启对账（不是 Windows）")
+        return
+
+    entries, problems = autostart.scan()
+    by_source: dict[str, set[str]] = {}
+    for entry in entries:
+        by_source.setdefault(entry.source, set()).add(entry.name)
+
+    hives = {"HKCU": winreg.HKEY_CURRENT_USER, "HKLM": winreg.HKEY_LOCAL_MACHINE}
+
+    # ---- 注册表
+    # 「该扫哪些位置」是规格，必须写在这里，不能从 RUN_KEYS 里推出来 —— 否则
+    # 表里少一行，循环也就少跑一行，漏掉的那块永远不会被对账发现（试过）。
+    canonical = []
+    for hive in ("HKCU", "HKLM"):
+        for middle in ("Software", r"Software\WOW6432Node"):
+            for leaf in ("Run", "RunOnce"):
+                canonical.append((hive, middle + "\\Microsoft\\Windows\\CurrentVersion\\" + leaf))
+    scanned = {(hive, subkey): label for hive, subkey, _s, _k, label in autostart.RUN_KEYS}
+    for hive_name, subkey in canonical:
+        label = scanned.get((hive_name, subkey))
+        if not label:
+            check(f"注册表对账 · {hive_name}\\{subkey}", False, "这个位置没扫")
+            continue
+        try:
+            with winreg.OpenKey(hives[hive_name], subkey) as handle:
+                raw, index = set(), 0
+                while True:
+                    try:
+                        raw.add(winreg.EnumValue(handle, index)[0])
+                    except OSError:
+                        break
+                    index += 1
+        except FileNotFoundError:
+            raw = set()
+        got = by_source.get(label, set())
+        missing = raw - got
+        # 非字符串的值本来就不会被列出来，但它会在 problems 里点名 —— 那不算漏
+        unexplained = {n for n in missing if not any(f"「{n}」" in p for p in problems)}
+        check(
+            f"注册表对账 · {label}",
+            not unexplained,
+            "漏了：" + "、".join(sorted(unexplained)[:3]) if unexplained else "",
+        )
+
+    # ---- 启动文件夹
+    for scope, folder, label in autostart._startup_dirs():
+        if not os.path.isdir(folder):
+            continue
+        raw = {n for n in os.listdir(folder) if n.lower() != "desktop.ini"}
+        got = by_source.get(label, set())
+        check(f"启动文件夹对账 · {label}", raw == got, f"系统有 {len(raw)} 个，报了 {len(got)} 个")
+
+    # ---- 计划任务（登录/开机触发）
+    ok, task_out, task_err = pwsh.run_text(
+        "Get-ScheduledTask | Where-Object { $_.Triggers | "
+        "Where-Object { $_.CimClass.CimClassName -match 'LogonTrigger|BootTrigger' } } | "
+        "Measure-Object | Select-Object -ExpandProperty Count",
+        timeout=120,
+    )
+    if ok and task_out.strip().isdigit():
+        want = int(task_out.strip())
+        got = sum(1 for e in entries if e.kind == "task")
+        check("计划任务对账", want == got, f"系统有 {want} 条，报了 {got} 条" if want != got else "")
+    else:
+        print(f"  · 跳过计划任务对账（PowerShell 没给出数字：{task_err.strip()[:60]}）")
+
+    # ---- 自动服务
+    ok, svc_out, svc_err = pwsh.run_text(
+        "(Get-CimInstance Win32_Service | Where-Object { $_.StartMode -eq 'Auto' }).Count",
+        timeout=120,
+    )
+    if ok and svc_out.strip().isdigit():
+        want = int(svc_out.strip())
+        got = sum(1 for e in entries if e.kind == "service")
+        check("自动服务对账", want == got, f"系统有 {want} 个，报了 {got} 个" if want != got else "")
+    else:
+        print(f"  · 跳过自动服务对账（PowerShell 没给出数字：{svc_err.strip()[:60]}）")
+
+
 def main() -> int:
     print("端到端自检")
     check_bad_arguments()
@@ -447,6 +546,7 @@ def main() -> int:
     check_page_js_filters()
     check_no_handle_leak()
     check_json_contract()
+    check_autostart_reconciliation()
     check_readme_test_count()
     check_python39_syntax()
     print()

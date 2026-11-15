@@ -25,6 +25,13 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **「一次看全」这句话以前没有硬证据。** 现在 `ci_checks.py` 做四个来源的对账：
+  注册表 8 个位置逐个读值比名字集合、启动文件夹 `os.listdir` 比名字、计划任务和
+  `Get-ScheduledTask` 比条数、服务数和 `Win32_Service` 比条数。本机实测：
+  16 Run + 6 RunOnce + 1 文件夹 + 46 计划任务 + 114 自动服务，全部对得上。
+  写这个检查时自己踩了个坑：第一版是**遍历 `RUN_KEYS` 去对账**，那表里少一行就
+  少对一行 —— 拿上一轮那个 bug 反证，它居然全绿。改成把「该扫哪些位置」当规格
+  硬编码在检查里，再删一行就立刻红。
 - **当前用户的 32 位自启项一条都看不到。** `RUN_KEYS` 里只有 `HKLM` 的
   `WOW6432Node`，`HKCU` 那份整份漏了。实测往
   `HKCU\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Run` 写一个值，
