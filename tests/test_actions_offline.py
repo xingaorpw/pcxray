@@ -324,6 +324,43 @@ class TestRestoreSkipsUnusableBackups(unittest.TestCase):
         self.assertFalse(actions._backup_is_usable(os.path.join(self._dir.name, "nope.json")))
 
 
+class TestFolderItemInMoveMode(unittest.TestCase):
+    """启动文件夹的项没有「改名的值」这回事。
+
+    以前只丢一句「不知道怎么改这一条」—— 用户不知道是自己用错了模式还是工具不支持。
+    """
+
+    def _entry(self):
+        return autostart.Entry(
+            name="某快捷方式.lnk",
+            kind="folder",
+            source="启动文件夹 · 当前用户",
+            scope="user",
+            command=r"C:\x\a.exe",
+            exe=r"C:\x\a.exe",
+            locator={
+                "hive": "HKCU",
+                "subkey": "StartupFolder",
+                "value": "某快捷方式.lnk",
+                "path": r"C:\x\a.lnk",
+            },
+        )
+
+    def test_move_mode_says_which_mode_to_use(self):
+        results, backup = actions.disable([self._entry()], mode=actions.MODE_MOVE, dry_run=True)
+        self.assertEqual(backup, "")
+        self.assertEqual(len(results), 1)
+        self.assertFalse(results[0].ok)
+        self.assertIn("没法改名", results[0].message)
+        self.assertIn("--mode move", results[0].message)
+
+    def test_flag_mode_still_plans_a_change(self):
+        plan = actions._plan(self._entry(), False, actions.MODE_FLAG)
+        self.assertIsNotNone(plan)
+        self.assertEqual(plan["kind"], "flag")
+        self.assertIn("StartupApproved", plan["subkey"])
+
+
 class TestRestoreRefusesWhatItCannotRead(unittest.TestCase):
     """认不出来的东西不能报「已还原」。
 

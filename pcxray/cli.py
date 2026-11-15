@@ -121,8 +121,22 @@ def _print_results(results: list[actions.Result]) -> int:
     return 0 if ok == len(results) else 1
 
 
+def _parse_include(value: str) -> list[str]:
+    """把 `--include` 拆成来源名。
+
+    逗号后面带空格是最自然的写法（`--include "registry, folders"`），以前会被
+    当成「不认识的 --include： folders」，前面的空格还在提示里，看着像工具坏了。
+    """
+    out: list[str] = []
+    for part in (value or "").split(","):
+        part = part.strip().lower()
+        if part and part not in out:
+            out.append(part)
+    return out
+
+
 def _load_entries(args) -> tuple[list[autostart.Entry], list[str]]:
-    include = tuple(args.include.split(",")) if args.include else ("registry", "folders", "tasks", "services")
+    include = tuple(_parse_include(args.include)) or ("registry", "folders", "tasks", "services")
     return autostart.scan(include)
 
 
@@ -135,7 +149,9 @@ def _cmd_list(args) -> int:
         # 负数是坑：`shown[:-1]` 会静默少掉最后一行，看起来像「数据就这么点」
         print("  ✗ --limit 不能是负数。0 表示不限，其它值是最多显示几行。", file=sys.stderr)
         return 2
-    if args.kind and args.kind not in _KNOWN_KINDS:
+    # `--kind " task "` / `--kind TASK` 都该认：大小写和多余空格不是用户的错
+    kind = (args.kind or "").strip().lower()
+    if kind and kind not in _KNOWN_KINDS:
         # 不认识的 kind 以前会静默输出一份正常报告，用户会以为「这一类没有条目」
         print(
             f"  ✗ 不认识的 --kind：{args.kind}\n"
@@ -144,7 +160,7 @@ def _cmd_list(args) -> int:
         )
         return 2
     if args.include:
-        bad = [p for p in args.include.split(",") if p and p not in _KNOWN_INCLUDE]
+        bad = [p for p in _parse_include(args.include) if p not in _KNOWN_INCLUDE]
         if bad:
             # 静默忽略会变成「扫了 0 条」，用户以为系统很干净
             print(
@@ -160,7 +176,7 @@ def _cmd_list(args) -> int:
         rep.problems.extend(problems)
         print(
             json.dumps(
-                rep.as_dict(only=args.kind or "", limit=args.limit),
+                rep.as_dict(only=kind, limit=args.limit),
                 ensure_ascii=False,
                 indent=2,
             )
@@ -168,7 +184,7 @@ def _cmd_list(args) -> int:
         return 0
     rep = report_mod.build(entries=entries, process_list=process_list)
     rep.problems.extend(p for p in problems if p not in rep.problems)
-    lines = list(report_mod.render(rep, limit=args.limit, only=args.kind or ""))
+    lines = list(report_mod.render(rep, limit=args.limit, only=kind))
     for line in lines:
         print(line)
     note = _width_note(lines)

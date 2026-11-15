@@ -280,7 +280,12 @@ def _plan(entry, turn_on: bool, mode: str) -> dict | None:
             return None
         if mode == MODE_MOVE:
             if entry.kind == "folder":
-                return None  # 启动文件夹的项没有「改名的值」这回事
+                # 启动文件夹里是一个个文件，没有「改名的值」这回事。说清楚该用哪种
+                # 模式，别只丢一句「不知道怎么改这一条」。
+                return {
+                    "name": entry.name,
+                    "refuse": "启动文件夹的项没法改名，用默认的标记模式（不加 --mode move）",
+                }
             source = MOVE_PREFIX + value if turn_on else value
             target = value if turn_on else MOVE_PREFIX + value
             existed, old_value, old_kind = _read_value(hive, subkey, source)

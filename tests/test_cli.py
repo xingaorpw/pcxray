@@ -237,6 +237,44 @@ class _StubReport:
         self.problems: list[str] = []
 
 
+class TestFilterArgumentsAreForgiving(unittest.TestCase):
+    """逗号后面带空格、随手大写，都不是用户的错。
+
+    `--include "registry, folders"` 以前会被当成「不认识的 --include： folders」，
+    提示里还带着那个前导空格，看着像工具坏了。
+    """
+
+    def test_include_accepts_spaces_and_case(self):
+        self.assertEqual(cli._parse_include("registry, folders"), ["registry", "folders"])
+        self.assertEqual(cli._parse_include(" REGISTRY ,Folders "), ["registry", "folders"])
+        self.assertEqual(cli._parse_include("registry,registry"), ["registry"])
+
+    def test_include_with_space_is_accepted_by_the_cli(self):
+        captured = io.StringIO()
+        with mock.patch.object(cli.autostart, "scan", return_value=([], [])) as scan, mock.patch.object(
+            cli.winapi, "processes", return_value=[]
+        ), contextlib.redirect_stdout(captured):
+            code = cli.main(["list", "--include", "registry, folders"])
+        self.assertEqual(code, 0)
+        self.assertEqual(scan.call_args[0][0], ("registry", "folders"))
+
+    def test_unknown_include_still_rejected(self):
+        err = io.StringIO()
+        with mock.patch.object(cli.autostart, "scan", return_value=([], [])), contextlib.redirect_stderr(err):
+            code = cli.main(["list", "--include", "registry, nope"])
+        self.assertEqual(code, 2)
+        self.assertIn("nope", err.getvalue())
+
+    def test_kind_is_case_and_space_insensitive(self):
+        for value in ("task", "TASK", " Task "):
+            captured = io.StringIO()
+            with mock.patch.object(cli.autostart, "scan", return_value=([], [])), mock.patch.object(
+                cli.winapi, "processes", return_value=[]
+            ), contextlib.redirect_stdout(captured):
+                code = cli.main(["list", "--kind", value])
+            self.assertEqual(code, 0, value)
+
+
 class TestEmptyNameIsExplained(unittest.TestCase):
     """`pcxray off ""` 是引号没写对时最容易出现的输入。
 

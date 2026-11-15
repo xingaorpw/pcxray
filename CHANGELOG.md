@@ -25,6 +25,11 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **`--include "registry, folders"` 会被拒。** 逗号后面带空格是最自然的写法，以前
+  会报「不认识的 --include： folders」—— 提示里还带着那个前导空格，看着像工具坏了。
+  现在空格、大小写、重复项都认。`--kind " TASK "` 同理。
+- **`--mode move` 关启动文件夹的项只报「不知道怎么改这一条」。** 用户不知道是自己
+  用错了模式还是工具不支持。现在写「启动文件夹的项没法改名，用默认的标记模式」。
 - **`pcxray off ""` 的提示看不出哪里错了。** 引号没写对时最容易出现这种输入，
   原来只报「✗ 　没有这一条」—— 名字那一段是空的。现在报「名字不能是空的，写要关
   的那一条的名字或 id」。
