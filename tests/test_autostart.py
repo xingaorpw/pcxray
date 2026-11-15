@@ -161,8 +161,14 @@ class TestWeirdRegistryValueTypes(unittest.TestCase):
     @contextlib.contextmanager
     def _fake_values(self, values):
         # 只留一个键，不然同一个假值会被 5 个键各读一遍
+        def fake(_hive, subkey):
+            # 被 --mode move 挪走的键里没有东西 —— 假数据只喂给 Run 本身
+            if subkey.endswith(autostart.DISABLED_SUFFIX):
+                return []
+            return values
+
         with mock.patch.object(autostart, "RUN_KEYS", self.SINGLE_KEY), mock.patch.object(
-            autostart, "_read_values", return_value=values
+            autostart, "_read_values", side_effect=fake
         ):
             yield
 

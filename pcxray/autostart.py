@@ -249,6 +249,12 @@ def approved_state(hive_name: str, kind: str, name: str) -> bool | None:
     return None
 
 
+# `--mode move` 把值挪到这个后缀的键里。**必须是另一个键**：`Run` 里的每一个值
+# Windows 都会执行，把名字改成 `~xxx` 照样会启动（见 MS 文档 Run/RunOnce 一节，
+# 只有 RunOnce 的 `!`、`*` 前缀有特殊含义）。挪到 Windows 不读的键里才真的不启动。
+DISABLED_SUFFIX = "-pcxray-disabled"
+
+
 def scan_registry(problems: list[str] | None = None) -> list[Entry]:
     """注册表 Run / RunOnce 全部条目。
 
@@ -293,6 +299,37 @@ def scan_registry(problems: list[str] | None = None) -> list[Entry]:
                     caveat=caveat,
                     protected=False,
                     locator={"hive": hive_name, "subkey": subkey, "value": name},
+                )
+            )
+        # 被 `--mode move` 挪走的条目：值还在，但已经不在 Windows 会读的键里，
+        # 所以不会启动。列出来（标成禁用），`pcxray on` 才有东西可找。
+        for name, value, vtype in _read_values(hive_name, subkey + DISABLED_SUFFIX):
+            if not isinstance(value, str):
+                if problems is not None:
+                    problems.append(
+                        f"注册表「{name}」的值不是字符串，Windows 不会拿它启动任何东西，所以没列出来"
+                    )
+                continue
+            command = expand_vars(value)
+            out.append(
+                Entry(
+                    name=name,
+                    kind=kind,
+                    source=label,
+                    scope=scope,
+                    command=command,
+                    exe=split_exe(command),
+                    enabled=False,
+                    detail=f"{hive_name}\\{subkey}{DISABLED_SUFFIX}",
+                    note="被 pcxray 挪到了不会启动的键里",
+                    caveat="已经挪到 …" + DISABLED_SUFFIX + " 里了，不会启动；用 pcxray on 放回去",
+                    protected=False,
+                    locator={
+                        "hive": hive_name,
+                        "subkey": subkey + DISABLED_SUFFIX,
+                        "value": name,
+                        "moved": True,
+                    },
                 )
             )
     return out

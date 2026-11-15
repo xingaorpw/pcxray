@@ -351,7 +351,7 @@ class TestFolderItemInMoveMode(unittest.TestCase):
         self.assertEqual(backup, "")
         self.assertEqual(len(results), 1)
         self.assertFalse(results[0].ok)
-        self.assertIn("没法改名", results[0].message)
+        self.assertIn("没法用 --mode move", results[0].message)
         self.assertIn("--mode move", results[0].message)
 
     def test_flag_mode_still_plans_a_change(self):

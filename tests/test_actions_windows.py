@@ -164,21 +164,38 @@ class TestRegistryRoundTrip(unittest.TestCase):
         self.assertEqual(backup, "")
         self.assertIsNone(self._read(APPROVED_KEY, TEST_NAME))
 
-    def test_move_mode_renames_value_and_is_immediately_visible(self):
+    def test_move_mode_takes_the_value_out_of_run(self):
+        """--mode move 必须让值真的离开 Run。
+
+        老做法是同一个键里改名成 `~pcxray~原名`。但 `Run` 里的**每一个**值
+        Windows 都会执行（MS 文档：Run/RunOnce 的值都按命令行跑，只有 RunOnce
+        的 `!`、`*` 前缀有别的含义），改名字拦不住启动 —— 那个「立刻生效」是假的。
+        现在挪到 Windows 不读的 `Run-pcxray-disabled` 里。
+        """
+        disabled_key = RUN_KEY + autostart.DISABLED_SUFFIX
         results, backup = actions.disable([self._entry()], mode=actions.MODE_MOVE)
         self.assertTrue(results[0].ok, results[0].message)
-        self.assertIsNone(self._read(RUN_KEY, TEST_NAME), "原值应该已经不在 Run 下了")
-        renamed = self._read(RUN_KEY, actions.MOVE_PREFIX + TEST_NAME)
-        self.assertEqual(renamed, r"C:\Windows\system32\notepad.exe /test")
+        self.assertIsNone(self._read(RUN_KEY, TEST_NAME), "值必须离开 Run，否则照样会启动")
+        self.assertEqual(self._read(disabled_key, TEST_NAME), r"C:\Windows\system32\notepad.exe /test")
 
-        # 这条是「当场可验证」的：扫描器看不到它了
-        entries = autostart.scan_registry()
-        self.assertNotIn(TEST_NAME, [e.name for e in entries])
+        # 扫描器还看得见它，但标成禁用 —— 不然 `pcxray on` 就找不到东西可放回去
+        listed = [e for e in autostart.scan_registry() if e.name == TEST_NAME]
+        self.assertEqual(len(listed), 1, "挪走的条目应该还能被列出来（标成禁用）")
+        self.assertFalse(listed[0].enabled)
 
-        back, _b = actions.enable([self._entry()], mode=actions.MODE_MOVE)
+        back, _b = actions.enable(listed, mode=actions.MODE_MOVE)
         self.assertTrue(back[0].ok, back[0].message)
         self.assertEqual(self._read(RUN_KEY, TEST_NAME), r"C:\Windows\system32\notepad.exe /test")
-        self.assertIsNone(self._read(RUN_KEY, actions.MOVE_PREFIX + TEST_NAME))
+        self.assertIsNone(self._read(disabled_key, TEST_NAME))
+
+    def test_move_mode_then_restore_puts_it_back(self):
+        disabled_key = RUN_KEY + autostart.DISABLED_SUFFIX
+        _r, backup = actions.disable([self._entry()], mode=actions.MODE_MOVE)
+        self.assertIsNone(self._read(RUN_KEY, TEST_NAME))
+        results, _p = actions.restore(backup)
+        self.assertTrue(results[0].ok, results[0].message)
+        self.assertEqual(self._read(RUN_KEY, TEST_NAME), r"C:\Windows\system32\notepad.exe /test")
+        self.assertIsNone(self._read(disabled_key, TEST_NAME))
 
     def test_protected_entry_is_refused_even_with_force(self):
         entry = self._entry()
@@ -421,13 +438,14 @@ class TestRealScan(unittest.TestCase):
 
 
 class TestMoveModeNeverOverwrites(unittest.TestCase):
-    """`--mode move` 改名时，目标名已经有值就必须停下。
+    """挪值的时候目标已经有别的值，就必须停下。
 
-    以前直接写：目标名存在时 Windows 会覆盖，而且返回值还是「已改名为 …」。
-    用户的一条自启项就这么没了，事后完全看不出来 —— 工具承诺过「不删你的东西」。
+    以前直接写：目标存在时 Windows 会覆盖，返回值还是「已改名为 …」。用户的一条
+    自启项就这么没了，事后完全看不出来 —— 工具承诺过「不删你的东西」。
     """
 
     KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+    OFF = KEY + autostart.DISABLED_SUFFIX
 
     def setUp(self):
         if not winapi.IS_WINDOWS:
@@ -438,38 +456,37 @@ class TestMoveModeNeverOverwrites(unittest.TestCase):
         self._patch = mock.patch.object(actions, "BACKUP_DIR", self._dir.name)
         self._patch.start()
         self.name = "pcxray_collide_test"
-        self.moved = actions.MOVE_PREFIX + self.name
-        self._write(self.name, '"C:\\Windows\\System32\\notepad.exe" /A')
-        self._write(self.moved, '"C:\\Windows\\System32\\notepad.exe" /B')
+        self._write(self.KEY, self.name, '"C:\\Windows\\System32\\notepad.exe" /A')
+        self._write(self.OFF, self.name, '"C:\\Windows\\System32\\notepad.exe" /B')
 
     def tearDown(self):
-        for n in (self.name, self.moved):
-            self._delete(n)
+        for key in (self.KEY, self.OFF):
+            self._delete(key, self.name)
         self._patch.stop()
         self._dir.cleanup()
 
-    def _write(self, name, value):
+    def _write(self, key, name, value):
         import winreg
 
-        k = winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, self.KEY, 0, winreg.KEY_SET_VALUE)
+        k = winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, key, 0, winreg.KEY_SET_VALUE)
         winreg.SetValueEx(k, name, 0, winreg.REG_SZ, value)
         k.Close()
 
-    def _delete(self, name):
+    def _delete(self, key, name):
         import winreg
 
         try:
-            k = winreg.OpenKey(winreg.HKEY_CURRENT_USER, self.KEY, 0, winreg.KEY_SET_VALUE)
+            k = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key, 0, winreg.KEY_SET_VALUE)
             winreg.DeleteValue(k, name)
             k.Close()
         except OSError:
             pass
 
-    def _read(self, name):
+    def _read(self, key, name):
         import winreg
 
         try:
-            k = winreg.OpenKey(winreg.HKEY_CURRENT_USER, self.KEY)
+            k = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key)
             value, _kind = winreg.QueryValueEx(k, name)
             k.Close()
             return value
@@ -479,29 +496,24 @@ class TestMoveModeNeverOverwrites(unittest.TestCase):
     def _entry(self):
         entries, _ = autostart.scan(("registry",))
         for e in entries:
-            if e.name == self.name:
+            if e.name == self.name and not e.locator.get("moved"):
                 return e
         self.fail("没扫到刚写进去的测试条目")
 
     def test_disable_refuses_and_keeps_both_values(self):
         results, _backup = actions.disable([self._entry()], mode="move")
         self.assertFalse(results[0].ok, results[0].message)
-        self.assertIn("已经存在", results[0].message)
-        self.assertEqual(self._read(self.name), '"C:\\Windows\\System32\\notepad.exe" /A')
-        self.assertEqual(self._read(self.moved), '"C:\\Windows\\System32\\notepad.exe" /B')
-
-    def test_enable_refuses_and_keeps_both_values(self):
-        results, _backup = actions.enable([self._entry()], mode="move")
-        self.assertFalse(results[0].ok, results[0].message)
-        self.assertEqual(self._read(self.name), '"C:\\Windows\\System32\\notepad.exe" /A')
-        self.assertEqual(self._read(self.moved), '"C:\\Windows\\System32\\notepad.exe" /B')
+        self.assertIn("已经有一条同名的值", results[0].message)
+        self.assertEqual(self._read(self.KEY, self.name), '"C:\\Windows\\System32\\notepad.exe" /A')
+        self.assertEqual(self._read(self.OFF, self.name), '"C:\\Windows\\System32\\notepad.exe" /B')
 
     def test_identical_value_is_not_a_conflict(self):
-        # 两个名字指向同一条命令时改过去不会丢信息，不该拦
-        self._write(self.moved, '"C:\\Windows\\System32\\notepad.exe" /A')
+        # 两边指向同一条命令时挪过去不会丢信息，不该拦
+        self._write(self.OFF, self.name, '"C:\\Windows\\System32\\notepad.exe" /A')
         results, _backup = actions.disable([self._entry()], mode="move")
         self.assertTrue(results[0].ok, results[0].message)
-        self.assertEqual(self._read(self.moved), '"C:\\Windows\\System32\\notepad.exe" /A')
+        self.assertEqual(self._read(self.OFF, self.name), '"C:\\Windows\\System32\\notepad.exe" /A')
+        self.assertIsNone(self._read(self.KEY, self.name))
 
 
 if __name__ == "__main__":

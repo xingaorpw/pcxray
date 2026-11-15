@@ -22,7 +22,7 @@ import os
 import threading
 import time
 
-from . import safety
+from . import autostart, safety
 
 __all__ = [
     "Result",
@@ -36,7 +36,7 @@ __all__ = [
 ]
 
 MODE_FLAG = "flag"  # 改 StartupApproved（和任务管理器一致）
-MODE_MOVE = "move"  # 把 Run 值改名成 ~pcxray~<原名>（当场可见）
+MODE_MOVE = "move"  # 把 Run 值挪到 Windows 不读的 <键>-pcxray-disabled（当场可见）
 
 BACKUP_DIR = os.path.join(os.path.expanduser("~"), ".pcxray", "backup")
 
@@ -46,6 +46,8 @@ BACKUP_DIR = os.path.join(os.path.expanduser("~"), ".pcxray", "backup")
 _ENABLED = b"\x02\x00\x00\x00" + b"\x00" * 8
 _DISABLED_PREFIX = b"\x03\x00\x00\x00"
 
+# 老版本用「同一个键里改名成 ~pcxray~原名」来实现 --mode move。那其实拦不住
+# 启动（Run 里的每个值 Windows 都会执行），只是为了读得懂老备份才留着这个名字。
 MOVE_PREFIX = "~pcxray~"
 
 
@@ -266,6 +268,17 @@ def prune(keep: int, dry_run: bool = False) -> tuple[list[str], int, int]:
 # ------------------------------------------------------------------ 单个条目
 
 
+def _disabled_subkey(subkey: str) -> str:
+    """`--mode move` 把值挪到这个键。Windows 不读它，所以真的不会启动。"""
+    return subkey + autostart.DISABLED_SUFFIX
+
+
+def _original_subkey(subkey: str) -> str:
+    """被挪走的键 → 原来那个键。"""
+    suffix = autostart.DISABLED_SUFFIX
+    return subkey[: -len(suffix)] if subkey.endswith(suffix) else subkey
+
+
 def _plan(entry, turn_on: bool, mode: str) -> dict | None:
     """算出「要改什么」和「原来是什么」，不改任何东西。
 
@@ -280,33 +293,46 @@ def _plan(entry, turn_on: bool, mode: str) -> dict | None:
             return None
         if mode == MODE_MOVE:
             if entry.kind == "folder":
-                # 启动文件夹里是一个个文件，没有「改名的值」这回事。说清楚该用哪种
+                # 启动文件夹里是一个个文件，没有「挪注册表值」这回事。说清楚该用哪种
                 # 模式，别只丢一句「不知道怎么改这一条」。
                 return {
                     "name": entry.name,
-                    "refuse": "启动文件夹的项没法改名，用默认的标记模式（不加 --mode move）",
+                    "refuse": "启动文件夹的项没法用 --mode move，用默认的标记模式（不加 --mode move）",
                 }
-            source = MOVE_PREFIX + value if turn_on else value
-            target = value if turn_on else MOVE_PREFIX + value
-            existed, old_value, old_kind = _read_value(hive, subkey, source)
+            # 把值从「Windows 会读的键」挪到「Windows 不读的键」。
+            # 以前是同一个键里把名字改成 `~pcxray~xxx` —— 但 Run 里的**每个**值
+            # Windows 都会执行，改名字拦不住它，那个「立刻生效」是假的。
+            moved = bool(locator.get("moved"))
+            if turn_on:
+                if not moved:
+                    return {"name": entry.name, "noop": True}  # 本来就在 Run 里
+                source_key, target_key = subkey, _original_subkey(subkey)
+            else:
+                if moved:
+                    return {"name": entry.name, "noop": True}  # 已经挪走了
+                source_key, target_key = subkey, _disabled_subkey(subkey)
+            existed, old_value, old_kind = _read_value(hive, source_key, value)
             if not existed:
-                # 源不存在就没得改。继续往下走会「把 target 写成空」，等于删掉它
-                return {"name": entry.name, "refuse": f"注册表里已经没有 {source} 这一条了，可能被别处改过" }
-            # 目标名已经有值了 —— 再写就是覆盖，而且用户完全看不到被覆盖掉的是
-            # 什么。宁可拒绝，也不要悄悄毁掉一条自启项。
-            target_exists, target_value, _target_kind = _read_value(hive, subkey, target)
-            if target_exists and target_value != old_value:
-                # 覆盖 = 悄悄毁掉一条用户的自启项，而且事后看不出来
+                # 源不存在就没得挪。继续往下走会「把目标写成空」，等于删掉它
                 return {
                     "name": entry.name,
-                    "refuse": f"{target} 已经存在，再改会覆盖掉它，所以没动",
+                    "refuse": f"注册表里已经没有 {value} 这一条了，可能被别处改过",
+                }
+            # 目标键里已经有同名的值 —— 再写就是覆盖，用户完全看不到被覆盖掉的是
+            # 什么。宁可拒绝，也不要悄悄毁掉一条自启项。
+            target_exists, target_value, _target_kind = _read_value(hive, target_key, value)
+            if target_exists and target_value != old_value:
+                return {
+                    "name": entry.name,
+                    "refuse": f"{target_key} 里已经有一条同名的值，再挪过去会覆盖掉它，所以没动",
                 }
             return {
                 "kind": "move",
                 "hive": hive,
-                "subkey": subkey,
-                "old_name": source,
-                "new_name": target,
+                "subkey": source_key,
+                "target_subkey": target_key,
+                "old_name": value,
+                "new_name": value,
                 "existed": existed,
                 "value": old_value if isinstance(old_value, str) else "",
                 "value_kind": old_kind,
@@ -424,35 +450,29 @@ def _apply(plan: dict, turn_on: bool) -> Result:
         return Result(plan["name"], True, "已写入开关标记")
 
     if kind == "move":
-        hive, subkey = plan["hive"], plan["subkey"]
+        hive, source_key = plan["hive"], plan["subkey"]
+        target_key = plan.get("target_subkey") or source_key
+        if not plan["existed"]:
+            # 源值不在，就没有东西可以挪。报成功会让用户以为办成了，其实什么都没发生。
+            return Result(plan["name"], False, f"找不到 {plan['old_name']}，可能已经被改过或删掉了")
         try:
-            if turn_on:
-                if not plan["existed"]:
-                    # 源值不在，就没有东西可以改回去。报成功会让用户以为
-                    # 恢复了，其实什么都没发生。
-                    return Result(
-                        plan["name"], False, f"找不到 {plan['old_name']}，可能已经改回去了"
-                    )
-                _delete_value(hive, subkey, plan["old_name"])
-                _write_value(
-                    hive, subkey, plan["new_name"], plan["value"], plan["value_kind"] or None
-                )
-            else:
-                if not plan["existed"]:
-                    return Result(plan["name"], False, "找不到这条注册表值，可能已经被删掉了")
-                _delete_value(hive, subkey, plan["old_name"])
-                _write_value(
-                    hive, subkey, plan["new_name"], plan["value"], plan["value_kind"] or None
-                )
+            _write_value(
+                hive, target_key, plan["new_name"], plan["value"], plan["value_kind"] or None
+            )
+            _delete_value(hive, source_key, plan["old_name"])
         except PermissionError:
             return Result(plan["name"], False, "没有权限改这个键，需要管理员身份运行")
         except OSError as exc:
             return Result(plan["name"], False, f"改注册表失败：{exc}")
-        # 和 flag 一样，改完读回来确认
-        moved, _v, _k = _read_value(hive, subkey, plan["new_name"])
-        if not moved:
-            return Result(plan["name"], False, f"改名后找不到 {plan['new_name']}，已中止")
-        return Result(plan["name"], True, f"已{'恢复' if turn_on else '改名'}为 {plan['new_name']}")
+        # 和 flag 一样，改完读回来确认：源必须没了，目标必须有且值一样
+        still, _v, _k = _read_value(hive, source_key, plan["old_name"])
+        if still:
+            return Result(plan["name"], False, f"挪走之后 {plan['old_name']} 还在原来的键里，已中止")
+        moved, got, _kind2 = _read_value(hive, target_key, plan["new_name"])
+        if not moved or got != plan["value"]:
+            return Result(plan["name"], False, "挪过去之后读回来的值和预期不一致，已中止")
+        where = "不会启动的键" if not turn_on else "原来的键"
+        return Result(plan["name"], True, f"已挪到{where}（{target_key}）")
 
     if kind == "task":
         ok, message = _set_task(plan["path"], plan["task"], turn_on)
@@ -537,7 +557,12 @@ def _describe(plan: dict, turn_on: bool) -> str:
     if plan["kind"] == "flag":
         return f"{verb}（写 {plan['subkey'].split(chr(92))[-1]} 开关）"
     if plan["kind"] == "move":
-        return f"{verb}（把值改名为 {plan['new_name']}）"
+        target = plan.get("target_subkey") or ""
+        where = target.split(chr(92))[-1] if target else "同一个键"
+        if target and target == plan["subkey"]:
+            # 老备份里记的是同一个键里改名
+            return f"{verb}（把值改名为 {plan['new_name']}）"
+        return f"{verb}（把 {plan.get('old_name') or plan['new_name']} 挪到 {where}）"
     if plan["kind"] == "task":
         return f"{verb}计划任务"
     if plan["kind"] == "service":
@@ -746,12 +771,25 @@ def restore(path: str = "", dry_run: bool = False) -> tuple[list[Result], str]:
                     results.append(Result(name, True, "已删除开关标记（恢复成默认启用）"))
             elif op["kind"] == "move":
                 hive, subkey = op["hive"], op["subkey"]
-                _delete_value(hive, subkey, op["new_name"])
-                if op.get("existed"):
+                target = op.get("target_subkey") or subkey
+                if target != subkey:
+                    # 新式备份：值被挪到了另一个键，放回原来的键
                     _write_value(
                         hive, subkey, op["old_name"], op["value"], op.get("value_kind") or None
                     )
-                results.append(Result(name, True, "已改回原来的值名"))
+                    _delete_value(hive, target, op["new_name"])
+                else:
+                    # 老备份：同一个键里改名（那时候的做法其实拦不住启动）
+                    _delete_value(hive, subkey, op["new_name"])
+                    if op.get("existed"):
+                        _write_value(
+                            hive, subkey, op["old_name"], op["value"], op.get("value_kind") or None
+                        )
+                got_ok, got, _k = _read_value(hive, subkey, op["old_name"])
+                if not got_ok or got != op["value"]:
+                    results.append(Result(name, False, "还原后读回来的值和备份不一致"))
+                else:
+                    results.append(Result(name, True, "已放回原来的键"))
             elif op["kind"] == "task":
                 if op.get("was_enabled"):
                     ok, message = _set_task(op.get("path", "\\"), op["task"], True)

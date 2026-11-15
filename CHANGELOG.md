@@ -25,6 +25,16 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **`--mode move` 根本拦不住启动 —— 这是最严重的一个。** 老做法是在**同一个**
+  `Run` 键里把值改名成 `~pcxray~原名`。但 `Run` 里的每一个值 Windows 都会执行
+  （见 [Run and RunOnce Registry Keys](https://learn.microsoft.com/en-us/windows/win32/setupapi/run-and-runonce-registry-keys)：
+  只有 `RunOnce` 的 `!`、`*` 前缀有别的含义），改名字它照样启动 —— README 里
+  「立刻生效」那句话是假的。现在把值挪到旁边的 `Run-pcxray-disabled` 键，
+  Windows 不读那个键，所以真的不启动；`off` 之后 `Run` 下已经没有它了，当场可验证。
+  扫描器会把它列成「已禁用」，`pcxray on 名字 --mode move` 挪回来。
+  挪完会读回来确认：源键里必须没了、目标键里必须有且值一样。
+- **`on --mode move` 永远不可能成功。** 老代码在 `_plan` 里给名字再加一次前缀
+  （`~pcxray~~pcxray~原名`），所以每次都报「注册表里已经没有 … 这一条了」。
 - **`--include "registry, folders"` 会被拒。** 逗号后面带空格是最自然的写法，以前
   会报「不认识的 --include： folders」—— 提示里还带着那个前导空格，看着像工具坏了。
   现在空格、大小写、重复项都认。`--kind " TASK "` 同理。
