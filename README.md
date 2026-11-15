@@ -240,6 +240,19 @@ python -m pcxray off 名字 --force       # 允许改服务（默认只给建议
 | `ram --json` | `total_mb` | **所有程序占用之和**（不是物理内存，别混） |
 | `ram --json` | `groups` / `hidden_by_limit` | 给出来的分组 / 被截掉多少 |
 
+`list --json` 剩下的顶层键：
+
+| 键 | 含义 |
+|---|---|
+| `generated` | 扫描时刻，本地时间字符串 `YYYY-MM-DD HH:MM:SS` |
+| `admin` | 是不是以管理员身份跑的 |
+| `boot` / `logon` | 开机时刻 / 登录时刻，**Unix 时间戳（秒，带小数）**，不是 Windows FILETIME |
+| `process_count` / `unreadable_processes` | 进程总数 / 其中读不到路径的个数 |
+| `memory_coverage` | 内存数据的覆盖程度，`all` 表示全部进程都读到了 |
+| `problems` | 读不到的部分，空数组表示没漏 |
+| `groups` | 内存分组，和 `ram --json` 的 `groups` 是同一份数据 |
+| `background` | 没有可见窗口的程序（`groups` 的子集） |
+
 `--kind` 只认 `run` / `run32` / `runonce` / `folder` / `task` / `service`，`--include` 只认 `registry` / `folders` / `tasks` / `services`。**写错会当场报错退出**，不会静默给你一份「这一类没有条目」的空报告。
 
 ### 清掉旧备份

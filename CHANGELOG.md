@@ -25,6 +25,12 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **`--json` 的时间戳没写单位和纪元，大半字段没写进文档。** `boot` / `logon` 是
+  裸数字，谁也不知道是 Unix 秒、毫秒还是 Windows FILETIME。现在 README 把
+  `list --json` 的每个顶层键都写清楚了（`boot`/`logon` 明确是 Unix 秒），
+  ci_checks 还钉住了不变量：两个值都落在 2000 年之后、现在之前，而且
+  `boot <= logon`。反证过：把 `logon` 改成毫秒，检查立刻报
+  「读到 1794411007279.2378」。
 - **`--json` 里两个不同的量撞了名，单位还不同。** `list --json` 的 `ram` 是
   `{total, available}`（字节，键名没说单位），`ram --json` 的 `total_mb` 是
   「所有程序占用之和」。同一个工具，同一个词，两个含义，两种单位 —— 脚本照着

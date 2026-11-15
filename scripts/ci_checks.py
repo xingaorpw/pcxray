@@ -633,6 +633,54 @@ def check_json_memory_keys() -> None:
     )
 
 
+def check_json_timestamps() -> None:
+    """时间戳必须还是 Unix 秒，而且满足 boot <= logon <= now。
+
+    `boot` / `logon` 是裸数字，没有单位也没说纪元。如果有人把它改成 Windows
+    FILETIME（1.3e17）或者毫秒（1.7e12），数字看着还在，脚本里 `datetime.
+    fromtimestamp()` 直接炸，或者算出 1970 年。这条检查把不变量钉住。
+    """
+    import json
+    import subprocess
+    import sys
+    import time
+
+    done = subprocess.run(
+        [sys.executable, "-m", "pcxray", "list", "--json", "--limit", "0"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    if done.returncode != 0:
+        check("时间戳检查能跑", False, done.stderr[-200:])
+        return
+    try:
+        payload = json.loads(done.stdout)
+    except json.JSONDecodeError as exc:
+        check("时间戳检查能解析 JSON", False, str(exc)[:120])
+        return
+    now = time.time()
+    floor = 946684800.0  # 2000-01-01，比这还早说明单位或者纪元不对
+    boot = payload.get("boot")
+    logon = payload.get("logon")
+    for name, value in (("boot", boot), ("logon", logon)):
+        check(
+            f"{name} 是 Unix 秒",
+            isinstance(value, (int, float)) and floor <= value <= now + 60,
+            f"读到 {value!r}",
+        )
+    if isinstance(boot, (int, float)) and isinstance(logon, (int, float)):
+        check("开机不晚于登录", boot <= logon + 1, f"boot={boot} logon={logon}")
+    generated = payload.get("generated") or ""
+    ok = False
+    try:
+        time.strptime(generated, "%Y-%m-%d %H:%M:%S")
+        ok = True
+    except ValueError:
+        ok = False
+    check("generated 是可解析的本地时间", ok, f"读到 {generated!r}")
+
+
 def main() -> int:
     print("端到端自检")
     check_bad_arguments()
@@ -646,6 +694,7 @@ def main() -> int:
     check_autostart_reconciliation()
     check_page_js_reports_scan_failure()
     check_json_memory_keys()
+    check_json_timestamps()
     check_readme_test_count()
     check_python39_syntax()
     print()
