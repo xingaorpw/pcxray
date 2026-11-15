@@ -433,6 +433,24 @@ class TestCommandWiring(unittest.TestCase):
         self.assertIn("使用备份", out.getvalue())
         self.assertIn("1.json", out.getvalue())
 
+    def test_failed_restore_does_not_claim_the_backup_was_used(self):
+        """还原失败时写「使用备份：…」是假话 —— 那份备份根本没被用上，是它坏了。
+
+        用户看到这句话会以为改动已经生效，转头发现还是关着的。
+        """
+        out = io.StringIO()
+        with mock.patch.object(
+            cli.actions,
+            "restore",
+            return_value=([actions.Result("（还原）", False, "备份文件不是合法 JSON")], r"C:\b\bad.json"),
+        ), contextlib.redirect_stdout(out):
+            code = cli.main(["restore", r"C:\b\bad.json"])
+        text = out.getvalue()
+        self.assertEqual(code, 1)
+        self.assertNotIn("使用备份", text)
+        self.assertIn("出问题的备份", text)
+        self.assertIn("bad.json", text)
+
     def test_backups_with_none_says_so(self):
         out = io.StringIO()
         with mock.patch.object(cli.actions, "list_backups", return_value=[]), contextlib.redirect_stdout(out):

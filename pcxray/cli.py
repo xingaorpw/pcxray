@@ -357,8 +357,13 @@ def _cmd_restore(args) -> int:
     done, path = actions.restore(args.backup or "", dry_run=args.dry_run)
     code = _print_results(done)
     if path:
+        # 还原失败时也写「使用备份」就是假话 —— 那份备份根本没被用上，是它
+        # 本身有问题。这时换个说法，用户才知道要处理的是哪个文件。
         print("")
-        print(f"  使用备份：{path}")
+        # 注意：不能写成 f"...{"x" if c else "y"}..." —— 那是 3.12 才允许的
+        # 同类引号嵌套，3.9 的解析器直接报 SyntaxError
+        label = "使用备份" if any(r.ok for r in done) else "出问题的备份"
+        print(f"  {label}：{path}")
     return code
 
 

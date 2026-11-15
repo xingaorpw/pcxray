@@ -413,6 +413,30 @@ def check_readme_test_count() -> None:
     check("README 正文数 = 真实测试数", int(body.group(1)) == total, f"正文 {body.group(1)}，实际 {total}")
 
 
+def check_python39_syntax() -> None:
+    """找 3.9 解析不了的写法 —— 本机只有 3.13，这类错只能靠规则抓。
+
+    典型是 f-string 里用同类引号嵌套：`f"{"a" if c else "b"}"`。3.12 起才允许
+    （PEP 701），3.9–3.11 直接 SyntaxError。`ast.parse(feature_version=(3, 9))`
+    抓不住这个（试过），所以按模式找。
+    """
+    pattern = re.compile(r"""f"[^"\n]*\{[^{}\n]*"[^{}\n]*\}""")
+    pattern_single = re.compile(r"""f'[^'\n]*\{[^{}\n]*'[^{}\n]*\}""")
+    hits: list[str] = []
+    for root, _dirs, files in os.walk("pcxray"):
+        for name in files:
+            if not name.endswith(".py"):
+                continue
+            path = os.path.join(root, name)
+            with open(path, encoding="utf-8") as handle:
+                for lineno, line in enumerate(handle, 1):
+                    if line.lstrip().startswith("#"):
+                        continue
+                    if pattern.search(line) or pattern_single.search(line):
+                        hits.append(f"{path}:{lineno}")
+    check("没有 3.12 才允许的 f-string 写法", not hits, "、".join(hits[:3]))
+
+
 def main() -> int:
     print("端到端自检")
     check_bad_arguments()
@@ -424,6 +448,7 @@ def main() -> int:
     check_no_handle_leak()
     check_json_contract()
     check_readme_test_count()
+    check_python39_syntax()
     print()
     if FAILED:
         print(f"  {len(FAILED)} 项没通过：{'、'.join(FAILED)}")
