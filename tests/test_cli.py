@@ -232,6 +232,59 @@ class TestMixedNamesAreAllReported(unittest.TestCase):
         self.assertIn(good.name, out)
 
 
+class _StubReport:
+    def __init__(self):
+        self.problems: list[str] = []
+
+
+class TestNarrowTerminalIsCalledOut(unittest.TestCase):
+    """表格比窗口宽时要说一句。
+
+    折行之后表头和数据会错位，看起来像排版坏了 —— 用户会以为是程序的问题。
+    """
+
+    def _note(self, columns, lines):
+        class Size:
+            pass
+
+        size = Size()
+        size.columns = columns
+        with mock.patch.object(cli.shutil, "get_terminal_size", return_value=size):
+            return cli._width_note(lines)
+
+    def test_wide_table_on_a_narrow_terminal_gets_a_note(self):
+        lines = ["  " + "x" * 96]
+        note = self._note(40, lines)
+        self.assertIn("会折行", note)
+        # 行首那两个空格也算宽度，所以是 98
+        self.assertIn("98", note)
+        self.assertIn("40", note)
+
+    def test_table_that_fits_gets_no_note(self):
+        self.assertEqual(self._note(200, ["  " + "x" * 96]), "")
+
+    def test_cjk_width_is_measured_not_guessed(self):
+        # 48 个汉字 = 96 列，加行首两个空格 = 98；按 len() 算只有 50，会漏报
+        lines = ["  " + "汉" * 48]
+        self.assertIn("98", self._note(80, lines))
+
+    def test_no_terminal_means_no_note(self):
+        self.assertEqual(self._note(0, ["  " + "x" * 200]), "")
+
+    def test_list_prints_the_note(self):
+        captured = io.StringIO()
+        with mock.patch.object(cli, "_load_entries", return_value=([], [])), mock.patch.object(
+            cli.winapi, "processes", return_value=[]
+        ), mock.patch.object(cli.report_mod, "build", return_value=_StubReport()), mock.patch.object(
+            cli.report_mod, "render", return_value=["  " + "x" * 120]
+        ), mock.patch.object(
+            cli.shutil, "get_terminal_size", return_value=type("S", (), {"columns": 40})()
+        ), contextlib.redirect_stdout(captured):
+            code = cli.main(["list"])
+        self.assertEqual(code, 0)
+        self.assertIn("会折行", captured.getvalue())
+
+
 class TestRamJsonHonoursLimit(unittest.TestCase):
     """`ram --json` 的 limit 语义要和 `list --json` 一致。
 

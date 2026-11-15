@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import sys
 
 from . import __version__, actions, autostart, procs, report as report_mod, text, winapi
@@ -77,6 +78,24 @@ def resolve(entries: list[autostart.Entry], query: str) -> tuple[autostart.Entry
     if len(partial) == 1:
         return partial[0], []
     return None, partial
+
+
+def _width_note(lines: list[str]) -> str:
+    """表格比窗口宽时提醒一句。
+
+    折行之后表头和数据会错位，看起来像排版坏了 —— 用户会以为是程序的问题。
+    取不到窗口宽度就什么都不说（重定向到文件时本来就没有窗口）。
+    """
+    try:
+        columns = shutil.get_terminal_size().columns
+    except OSError:
+        return ""
+    if columns <= 0:
+        return ""
+    need = text.widest(lines)
+    if need <= columns:
+        return ""
+    return f"  · 表格有 {need} 列宽，终端只有 {columns} 列，会折行；把窗口拉宽，或改用 --json"
 
 
 def _print_results(results: list[actions.Result]) -> int:
@@ -149,8 +168,12 @@ def _cmd_list(args) -> int:
         return 0
     rep = report_mod.build(entries=entries, process_list=process_list)
     rep.problems.extend(p for p in problems if p not in rep.problems)
-    for line in report_mod.render(rep, limit=args.limit, only=args.kind or ""):
+    lines = list(report_mod.render(rep, limit=args.limit, only=args.kind or ""))
+    for line in lines:
         print(line)
+    note = _width_note(lines)
+    if note:
+        print(note)
     return 0
 
 
@@ -195,11 +218,9 @@ def _cmd_ram(args) -> int:
         )
         print("")
     rows = []
-    # --limit 的语义在两条命令里必须一致：0 = 全部。ram 不传时的默认 25 由
-    # 子命令的 default 给出（见 build_parser），不能在这里用 `or 25` —— 那会把
-    # 用户明确写的 0 也当成「没写」，于是 --limit 0 只显示 25 行，还反过来劝
-    # 用户「用 --limit 0 看全部」。
-    # --limit 不写（None）= 表格默认给前 25 个；写 0 = 全部。
+    # --limit 的语义在两条命令里必须一致：0 = 全部。不写（None）= 表格默认 25 行，
+    # 这个默认值只在**表格**这条路径上生效 —— 不能写回 argparse 的 default，否则
+    # `ram --json` 会被表格的默认值截掉（脚本要的是全量）。
     # 这样 `ram --json` 能拿到全量（脚本要的就是全量），而表格不会一次刷 159 行。
     cap = 25 if args.limit is None else (args.limit or len(groups))
     shown_groups = groups[:cap]
@@ -214,14 +235,18 @@ def _cmd_ram(args) -> int:
                 procs.describe_started(item.started, logon),
             ]
         )
-    for line in text.table(
+    table_lines = text.table(
         ["程序", "进程数", "占用", "提交", "窗口", "启动"],
         rows,
         ["left", "right", "right", "right", "left", "left"],
         limits=[28, 8, 10, 10, 6, 20],
-    ):
+    )
+    for line in table_lines:
         print("  " + line)
     print("")
+    note = _width_note(table_lines)
+    if note:
+        print(note)
     if len(groups) > len(shown_groups):
         # 截断了就要说。只给 3 行又不说，用户会以为这台机器就 3 个程序在占内存
         print(

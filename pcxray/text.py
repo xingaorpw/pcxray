@@ -11,7 +11,7 @@ import math
 
 import unicodedata
 
-__all__ = ["width", "pad", "truncate", "table", "wrap"]
+__all__ = ["width", "widest", "pad", "truncate", "table", "wrap"]
 
 
 def _char_width(ch: str) -> int:
@@ -22,6 +22,11 @@ def _char_width(ch: str) -> int:
 
 def width(text: str) -> int:
     return sum(_char_width(ch) for ch in str(text))
+
+
+def widest(lines: list[str]) -> int:
+    """一组文本行的最大显示宽度。"""
+    return max((width(line) for line in lines), default=0)
 
 
 def truncate(text: str, limit: int, ellipsis: str = "…") -> str:
