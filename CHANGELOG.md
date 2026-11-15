@@ -25,6 +25,15 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **`--dry-run` 的「一个字节都不改」以前只手工试过一次。** 这是整个工具的
+  安全承诺：加了 `--dry-run` 就只说不做。现在 ci_checks 会写一个探针，把
+  8 个 Run 位置和 3 个 StartupApproved 栏位全抄一遍，跑
+  `off --dry-run`、`off --dry-run --mode move`、`on --dry-run`，再抄一遍比对
+  —— 注册表必须一个字节没变，临时 HOME 里不许出现备份文件，而且每条输出都得
+  让人看出来「没动手」。反证过：把 `_run` 里的 dry_run 判断短路，四条全红，
+  并且点名 `HKCU\...\Run\pcxray_selftest_noop` 和 `approved\Run32\...` 被改了。
+  （第一次反证改的是 `prune()` 里那处 dry_run —— 那条路径没被检查覆盖，
+  所以什么也没红。反证也得确认打中的是真路径。）
 - **`autostart.memory_mb` 的口径没写，照着 `items[].running_mb` 相加会虚高。**
   实现是按 **PID** 去重的（同一个进程被两条自启项指向只算一次），本机 Edge
   就有两条指向同一个 exe：直接相加 685.9 MB，真实合计 405.1 MB，虚高 69%。

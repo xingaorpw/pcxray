@@ -1009,6 +1009,123 @@ def check_autostart_memory_is_deduped() -> None:
     check("自启占用不为负", got >= 0, "" if got >= 0 else f"读到 {got}")
 
 
+def check_dry_run_writes_nothing() -> None:
+    r"""`--dry-run` 必须一个字节都不改。
+
+    这是整个工具的安全承诺：没加 `--dry-run` 才动手，加了就只说不做。以前
+    只有手工试过一次，没有任何自动检查 —— 万一哪天在写注册表之前把 dry_run
+    判断漏掉一处，用户的机器就被改了，而所有测试还是绿的。
+    """
+    import tempfile
+    import winreg
+
+    from pcxray import autostart, winapi
+
+    if not winapi.IS_WINDOWS:
+        print("  · 跳过 --dry-run 检查（不是 Windows）")
+        return
+
+    name = "pcxray_selftest_noop"
+    run_key = r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Run"
+    approved = r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved"
+
+    def snapshot() -> dict:
+        """把 8 个 Run 位置和 3 个 StartupApproved 栏位全抄一遍。"""
+        state: dict[str, object] = {}
+        for hive_name, subkey, _scope, _kind, label in autostart.RUN_KEYS:
+            hive = winreg.HKEY_CURRENT_USER if hive_name == "HKCU" else winreg.HKEY_LOCAL_MACHINE
+            try:
+                with winreg.OpenKey(hive, subkey) as handle:
+                    index = 0
+                    while True:
+                        try:
+                            key_name, value, _kind = winreg.EnumValue(handle, index)
+                        except OSError:
+                            break
+                        state[f"{hive_name}\\{subkey}\\{key_name}"] = value
+                        index += 1
+            except FileNotFoundError:
+                pass
+        for column in ("Run", "Run32", "StartupFolder"):
+            subkey = approved + "\\" + column
+            try:
+                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, subkey) as handle:
+                    index = 0
+                    while True:
+                        try:
+                            key_name, value, _kind = winreg.EnumValue(handle, index)
+                        except OSError:
+                            break
+                        state[f"approved\\{column}\\{key_name}"] = value
+                        index += 1
+            except FileNotFoundError:
+                pass
+        return state
+
+    def run_cli(args: list[str], home: str) -> tuple[int, str]:
+        env = dict(os.environ)
+        env["USERPROFILE"] = home
+        env["HOME"] = home
+        env["PYTHONIOENCODING"] = "utf-8"
+        done = subprocess.run(
+            [sys.executable, "-m", "pcxray"] + args,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            env=env,
+            timeout=300,
+        )
+        return done.returncode, done.stdout + done.stderr
+
+    with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, run_key) as handle:
+        winreg.SetValueEx(handle, name, 0, winreg.REG_SZ, r"C:\Windows\SysWOW64\notepad.exe")
+    try:
+        before = snapshot()
+        with tempfile.TemporaryDirectory() as home:
+            # 探针名字里故意不带 dry —— 上一版叫 pcxray_selftest_dryrun，于是
+            # 「输出里有 dry」这条断言被名字本身满足了，等于没查（试过）。
+            said: list[tuple[str, str]] = []
+            for args in (
+                ["off", name, "--dry-run"],
+                ["off", name, "--dry-run", "--mode", "move"],
+                ["on", name, "--dry-run"],
+            ):
+                code, out = run_cli(args, home)
+                said.append((" ".join(args), out))
+                check(
+                    f"{' '.join(args)} 退出码是 0",
+                    code == 0,
+                    "" if code == 0 else out.strip()[-120:],
+                )
+            after = snapshot()
+            diff = sorted(k for k in set(before) | set(after) if before.get(k) != after.get(k))
+            check(
+                "演练之后注册表一个字节都没变",
+                not diff,
+                "" if not diff else "变了：" + "、".join(diff[:3]),
+            )
+            backups = os.path.join(home, ".pcxray", "backup")
+            made = os.listdir(backups) if os.path.isdir(backups) else []
+            check("演练之后没有留下备份文件", not made, "" if not made else f"多出 {len(made)} 份：{made[:2]}")
+            # 每条演练的输出都得让人看出来「什么也没做」，不能安安静静像做了一样
+            silent = [
+                label
+                for label, text in said
+                if not any(word in text for word in ("演练", "不会", "没动", "跳过"))
+            ]
+            check(
+                "每条演练都说明自己没动手",
+                not silent,
+                "" if not silent else "这些没说：" + "、".join(silent[:3]),
+            )
+    finally:
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, run_key, 0, winreg.KEY_SET_VALUE) as handle:
+                winreg.DeleteValue(handle, name)
+        except FileNotFoundError:
+            pass
+
+
 def main() -> int:
     print("端到端自检")
     check_bad_arguments()
@@ -1027,6 +1144,7 @@ def main() -> int:
     check_no_syntax_warnings()
     check_page_reads_only_real_fields()
     check_autostart_memory_is_deduped()
+    check_dry_run_writes_nothing()
     check_readme_test_count()
     check_python39_syntax()
     print()
