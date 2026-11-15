@@ -134,11 +134,60 @@ def check_web_csrf() -> None:
         server.shutdown()
 
 
+def check_page_markup() -> None:
+    """网页的 HTML 结构必须闭合，占位符必须被替换掉。
+
+    没有视觉通道也能查这个：标签不平衡、`__TOKEN__` 没替换，浏览器那边就是
+    一片空白或者 403，而接口测试照样全绿。
+    """
+    import html.parser
+
+    from pcxray import web
+
+    page = web._PAGE.replace("__VERSION__", "0.2.0").replace("__TOKEN__", "x" * 32)
+    void = {
+        "area", "base", "br", "col", "embed", "hr", "img", "input",
+        "link", "meta", "param", "source", "track", "wbr",
+    }
+
+    class Checker(html.parser.HTMLParser):
+        def __init__(self):
+            super().__init__(convert_charrefs=True)
+            self.stack: list[str] = []
+            self.problems: list[str] = []
+
+        def handle_starttag(self, tag, attrs):
+            if tag not in void:
+                self.stack.append(tag)
+
+        def handle_endtag(self, tag):
+            if tag in void:
+                return
+            if not self.stack:
+                self.problems.append(f"多余的 </{tag}>")
+                return
+            if self.stack[-1] != tag:
+                self.problems.append(f"</{tag}> 关的是 <{self.stack[-1]}>")
+                if tag in self.stack:
+                    while self.stack and self.stack.pop() != tag:
+                        pass
+                return
+            self.stack.pop()
+
+    checker = Checker()
+    checker.feed(page)
+    check("页面标签都闭合", not checker.stack and not checker.problems,
+          str(checker.problems[:3] or checker.stack[:3]))
+    check("没有占位符残留", "__TOKEN__" not in page and "__VERSION__" not in page)
+    check("页面里有脚本和样式", "<script>" in page and "<style>" in page)
+
+
 def main() -> int:
     print("端到端自检")
     check_bad_arguments()
     check_json_filter()
     check_web_csrf()
+    check_page_markup()
     print()
     if FAILED:
         print(f"  {len(FAILED)} 项没通过：{'、'.join(FAILED)}")
