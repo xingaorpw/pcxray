@@ -12,7 +12,7 @@ import io
 import unittest
 from unittest import mock
 
-from pcxray import autostart, cli, procs
+from pcxray import autostart, cli, procs, web
 
 
 def entry(name, kind="run", source="测试"):
@@ -294,6 +294,26 @@ class TestEmptyNameIsExplained(unittest.TestCase):
             code = cli.main(["off", "", "--dry-run"])
         self.assertEqual(code, 1)
         self.assertIn("名字不能是空的", out.getvalue())
+
+
+class TestPortRange(unittest.TestCase):
+    """--port 70000 / -1 以前直接把 socket 的 OSError 抛出去，一屏 traceback。"""
+
+    def test_out_of_range_is_rejected_before_binding(self):
+        for value in ("70000", "-1", "65536"):
+            err = io.StringIO()
+            with mock.patch.object(web, "serve") as serve, contextlib.redirect_stderr(err):
+                code = cli.main(["web", "--port", value, "--no-browser"])
+            self.assertEqual(code, 2, value)
+            self.assertIn("0–65535", err.getvalue())
+            serve.assert_not_called()
+
+    def test_zero_and_normal_port_reach_serve(self):
+        for value in ("0", "8080", "65535"):
+            with mock.patch.object(web, "serve", return_value=0) as serve:
+                code = cli.main(["web", "--port", value, "--no-browser"])
+            self.assertEqual(code, 0, value)
+            serve.assert_called_once()
 
 
 class TestPruneCommand(unittest.TestCase):

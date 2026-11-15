@@ -395,6 +395,14 @@ def _cmd_prune(args) -> int:
 def _cmd_web(args) -> int:
     from . import web
 
+    # 70000 和 -1 以前会直接把 socket 的 OSError 抛出去，用户看到的是一屏
+    # traceback。端口范围是可数的，说清楚比甩栈强。
+    if not 0 <= args.port <= 65535:
+        print(
+            f"  ✗ --port 只能是 0–65535（0 = 让系统随便挑一个），收到 {args.port}",
+            file=sys.stderr,
+        )
+        return 2
     return web.serve(port=args.port, open_browser=not args.no_browser)
 
 

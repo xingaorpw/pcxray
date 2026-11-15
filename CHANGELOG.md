@@ -25,6 +25,8 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **`--port 70000` / `--port -1` 甩出一屏 traceback。** 端口范围是可数的，现在先
+  校验：退出 2，提示「--port 只能是 0–65535（0 = 让系统随便挑一个）」。
 - **旧版改名留下的 `~pcxray~原名` 条目没有任何提示。** 那些条目其实一直开着
   （改名拦不住启动），但列表里只看到一个怪名字。现在会说明「这是旧版 --mode move
   加的，它其实一直开着，用 pcxray off 重新关一次」。本机上 339 份备份里有 52 份
