@@ -77,6 +77,7 @@ class Entry:
         "triggers",
         "protected",
         "note",
+        "caveat",
         "key",
         "locator",
     )
@@ -94,6 +95,7 @@ class Entry:
         triggers: str = "",
         protected: bool = False,
         note: str = "",
+        caveat: str = "",
         locator: dict | None = None,
     ):
         self.name = name
@@ -107,6 +109,10 @@ class Entry:
         self.triggers = triggers
         self.protected = protected
         self.note = note
+        # 「我们没查清楚」这类必须让用户看到的话（快捷方式解不出来、服务读不到
+        # 可执行文件路径）。和 note 分开：note 里有「正在运行」这种状态描述，
+        # 114 个服务全都塞进备注列就是噪音。
+        self.caveat = caveat
         self.key = hashlib.sha1(f"{kind}|{scope}|{name}".encode("utf-8")).hexdigest()[:12]
         # 改的时候要用到的定位信息（注册表路径 / 任务路径 / 服务名）。
         # 跟展示用的 detail 分开：detail 是给人看的，locator 是给代码用的，
@@ -131,6 +137,7 @@ class Entry:
             "triggers": self.triggers,
             "protected": self.protected,
             "note": self.note,
+            "caveat": self.caveat,
             "locator": dict(self.locator),
         }
 
@@ -252,11 +259,14 @@ def scan_registry() -> list[Entry]:
             command = expand_vars(value)
             exe = split_exe(command)
             state = approved_state(hive_name, kind, name)
+            # 这里以前写的是 `note=note`，而 note 只在 `elif` 分支里赋过值 ——
+            # 只要前面几轮循环没进过那个分支，第一次遇到 RunOnce 就会 NameError，
+            # 整个扫描直接崩。之前没崩是因为绝大多数条目都没有 StartupApproved
+            # 记录，恰好走过一次赋值。现在两个变量都在这里显式初始化。
             note = ""
+            caveat = ""
             if kind == "runonce":
-                note = "只运行一次：执行完这条会被系统自己删掉，禁用意义不大"
-            elif state is None and kind != "runonce":
-                note = ""
+                caveat = "只运行一次，禁用意义不大"
             out.append(
                 Entry(
                     name=name,
@@ -268,6 +278,7 @@ def scan_registry() -> list[Entry]:
                     enabled=True if state is None else state,
                     detail=f"{hive_name}\\{subkey}",
                     note=note,
+                    caveat=caveat,
                     protected=False,
                     locator={"hive": hive_name, "subkey": subkey, "value": name},
                 )
@@ -354,7 +365,7 @@ def scan_folders() -> list[Entry]:
                 exe=exe,
                 enabled=True if state is None else state,
                 detail=detail,
-                note="" if target or not path.lower().endswith(".lnk") else "快捷方式的目标没解出来，只能看到文件名",
+                caveat="" if target or not path.lower().endswith(".lnk") else "快捷方式的目标没解出来，只能看到文件名",
                 locator={"hive": hive_name, "subkey": "StartupFolder", "value": filename, "path": path},
             )
         )
@@ -453,6 +464,7 @@ def scan_services() -> tuple[list[Entry], str]:
                 note="读不到可执行文件路径，按系统组件处理" if unreadable else (
                     "正在运行" if running else "已停止（仍会随开机启动）"
                 ),
+                caveat="读不到可执行文件路径，按系统组件处理" if unreadable else "",
                 protected=unreadable or safety.protected_service(name, command),
                 locator={"name": name},
             )

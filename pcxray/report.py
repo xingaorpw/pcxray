@@ -76,6 +76,11 @@ class Item:
             out.append(f"同一程序 {self.shared} 条")
         if self.needs_force and not self.refuse:
             out.append("需确认")
+        # 扫描器发现但没法用一个短标签概括的情况（快捷方式解不出来、服务读不到
+        # 可执行文件路径）都写在 entry.note 里。以前这些只进了 JSON，命令行表格
+        # 一个字都不显示 —— 用户看到光秃秃一个文件名，以为一切正常。
+        if self.entry.caveat:
+            out.append(self.entry.caveat)
         return out
 
     def as_dict(self) -> dict:
@@ -361,6 +366,10 @@ def render(report: Report, limit: int = 0, only: str = "") -> list[str]:
                 mark.append(f"占{text.mb(item.run_mb)}")
             if item.shared > 1:
                 mark.append(f"×{item.shared}条")
+            # 扫描器的话（快捷方式解不出来、服务读不到路径）也得进表格，
+            # 不然命令行用户只看到一个光秃秃的文件名
+            if item.entry.caveat:
+                mark.append(item.entry.caveat)
             rows.append(
                 [
                     _state(item.entry),

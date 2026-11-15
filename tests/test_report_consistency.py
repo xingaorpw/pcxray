@@ -254,6 +254,42 @@ class TestEmptyMachine(unittest.TestCase):
         self.assertEqual(data["background"], [])
 
 
+class TestCaveatSurfacing(unittest.TestCase):
+    """扫描器「没查清楚」的话必须出现在表格里。
+
+    以前这些只写进 JSON 的 `note` 字段，命令行表格一个字都不显示 —— 用户看到
+    光秃秃一个文件名，以为一切正常。
+    """
+
+    def _entry(self, **kw):
+        return autostart.Entry(
+            name=kw.pop("name", "x.lnk"),
+            kind=kw.pop("kind", "folder"),
+            source=kw.pop("source", "用户启动夹"),
+            scope="user",
+            **kw,
+        )
+
+    def test_caveat_shows_in_flags(self):
+        item = report.Item(self._entry(caveat="快捷方式的目标没解出来，只能看到文件名"))
+        self.assertIn("快捷方式的目标没解出来，只能看到文件名", item.flags)
+
+    def test_caveat_shows_in_the_table(self):
+        rep = build([self._entry(caveat="快捷方式的目标没解出来，只能看到文件名")], [])
+        self.assertIn("快捷方式的目标没解出来", "\n".join(render(rep)))
+
+    def test_plain_state_note_does_not_pollute_the_column(self):
+        # 「正在运行」这类状态描述 114 条服务都有，塞进备注列就是噪音
+        rep = build([self._entry(kind="service", source="服务", note="正在运行")], [])
+        self.assertNotIn("正在运行", "\n".join(render(rep)))
+
+    def test_caveat_is_in_the_json(self):
+        data = build([self._entry(caveat="读不到可执行文件路径，按系统组件处理")], []).as_dict()
+        item = data["autostart"]["items"][0]
+        self.assertEqual(item["caveat"], "读不到可执行文件路径，按系统组件处理")
+        self.assertIn("读不到可执行文件路径，按系统组件处理", item["flags"])
+
+
 class TestGroupCoverage(unittest.TestCase):
     def test_every_process_lands_in_exactly_one_group(self):
         procs_list = [
