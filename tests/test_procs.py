@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 import unittest
+from unittest import mock
 
 from pcxray import procs, winapi
 
@@ -28,6 +29,74 @@ def fake(
         windows=windows,
         readable=readable,
     )
+
+
+class TestVerifyMemory(unittest.TestCase):
+    """抽样比对未文档化接口和官方接口 —— 结构体偏移错位时给出的不是少一行数据，
+    而是一本正经的错误数字。用户照着它去关进程，关错东西。
+
+    这段判断以前没有测试：它在真机上总是走「全部对得上」那条路。
+    """
+
+    def _fake_k32(self, openable=True):
+        k32 = mock.Mock()
+        k32.OpenProcess.return_value = 1234 if openable else 0
+        k32.CloseHandle.return_value = True
+        return k32
+
+    def _fake_psapi(self, values):
+        """values: 依次返回的 WorkingSetSize 列表（0 表示取不到）。"""
+        psapi = mock.Mock()
+        queue = list(values)
+
+        def fake(handle, byref_counters, size):
+            value = queue.pop(0) if queue else 0
+            # byref 参数拿不到真实结构体，直接改真实对象的字段
+            counters = byref_counters._obj
+            counters.WorkingSetSize = value
+            return 1 if value else 0
+
+        psapi.GetProcessMemoryInfo.side_effect = fake
+        return psapi
+
+    def test_agreement_is_trusted(self):
+        mem = {pid: (2 * 1048576, 0) for pid in range(1, 9)}
+        ok = winapi._verify_memory(
+            self._fake_k32(), self._fake_psapi([2 * 1048576] * 8), mem
+        )
+        self.assertTrue(ok)
+
+    def test_small_values_are_skipped(self):
+        # 小于 1 MB 的进程比不出什么，跳过不算样本
+        mem = {1: (4096, 0)}
+        psapi = self._fake_psapi([])
+        self.assertTrue(winapi._verify_memory(self._fake_k32(), psapi, mem))
+        psapi.GetProcessMemoryInfo.assert_not_called()
+
+    def test_disagreement_is_rejected(self):
+        mem = {1: (2 * 1048576, 0)}
+        ok = winapi._verify_memory(
+            self._fake_k32(), self._fake_psapi([10 * 1048576]), mem
+        )
+        self.assertFalse(ok, "差 5 倍还说对得上，等于把错数字放行")
+
+    def test_within_twenty_percent_is_fine(self):
+        # 扫描期间进程还在长，允许 20% 偏差
+        mem = {1: (1000 * 1024, 0)}
+        ok = winapi._verify_memory(self._fake_k32(), self._fake_psapi([1100 * 1024]), mem)
+        self.assertTrue(ok)
+
+    def test_no_sample_means_no_evidence_but_pass(self):
+        # 一个进程都打不开（非管理员很常见）时不能因此判定接口不可信：
+        # 它是唯一能看到全部进程的路径，缺数据比可能的偏差更糟
+        mem = {1: (2 * 1048576, 0)}
+        self.assertTrue(winapi._verify_memory(self._fake_k32(openable=False), self._fake_psapi([]), mem))
+
+    def test_handle_is_always_closed(self):
+        mem = {1: (2 * 1048576, 0)}
+        k32 = self._fake_k32()
+        winapi._verify_memory(k32, self._fake_psapi([0]), mem)
+        k32.CloseHandle.assert_called_once_with(1234)
 
 
 class TestGroup(unittest.TestCase):

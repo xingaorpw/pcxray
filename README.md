@@ -1,7 +1,7 @@
 # pcxray
 
 [![CI](https://github.com/xingaorpw/pcxray/actions/workflows/ci.yml/badge.svg)](https://github.com/xingaorpw/pcxray/actions/workflows/ci.yml)
-[![tests](https://img.shields.io/badge/tests-494%20passed-brightgreen)](https://github.com/xingaorpw/pcxray/tree/main/tests)
+[![tests](https://img.shields.io/badge/tests-506%20passed-brightgreen)](https://github.com/xingaorpw/pcxray/tree/main/tests)
 [![python](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/downloads/)
 [![deps](https://img.shields.io/badge/dependencies-0-brightgreen)](https://github.com/xingaorpw/pcxray/blob/main/pyproject.toml)
 [![license](https://img.shields.io/badge/license-MIT-blue)](https://github.com/xingaorpw/pcxray/blob/main/LICENSE)
@@ -274,7 +274,7 @@ pcxray prune --keep 20     # 真删
 ## 开发
 
 ```bash
-python -m unittest discover -s tests -t .     # 494 个测试
+python -m unittest discover -s tests -t .     # 506 个测试
 ```
 
 测试分两类：不依赖 Windows 的逻辑（命令行解析、开关状态解码、内存分组、表格排版、网页接口）在 Linux 上也能跑；真正读写注册表的端到端测试只在 Windows 上跑（`skipUnless`）。CI 两边都跑。

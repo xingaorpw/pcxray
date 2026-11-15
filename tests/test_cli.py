@@ -323,6 +323,70 @@ class TestPortRange(unittest.TestCase):
             serve.assert_called_once()
 
 
+class TestMainDispatch(unittest.TestCase):
+    """`main()` 自己的几条分支：不带参数、Ctrl+C、非 Windows、--elevate。
+
+    这些是每条命令都要经过的路，以前一条都没测过。
+    """
+
+    def _entry(self):
+        return autostart.Entry(name="X", kind="run", source="注册表 · 当前用户 Run", scope="user")
+
+    def test_no_arguments_means_list(self):
+        # 不带参数 = list，这是最常用的一条
+        out = io.StringIO()
+        with mock.patch.object(cli.autostart, "scan", return_value=([self._entry()], [])), mock.patch.object(
+            cli.winapi, "processes", return_value=[]
+        ), contextlib.redirect_stdout(out):
+            code = cli.main([])
+        self.assertEqual(code, 0)
+        self.assertIn("pcxray", out.getvalue())
+
+    def test_keyboard_interrupt_exits_130(self):
+        with mock.patch.object(cli.autostart, "scan", side_effect=KeyboardInterrupt), mock.patch.object(
+            cli.winapi, "processes", return_value=[]
+        ), contextlib.redirect_stdout(io.StringIO()):
+            code = cli.main(["list"])
+        self.assertEqual(code, 130)
+
+    def test_non_windows_exits_2(self):
+        out = io.StringIO()
+        with mock.patch.object(cli.winapi, "IS_WINDOWS", False), contextlib.redirect_stdout(out):
+            code = cli.main(["list"])
+        self.assertEqual(code, 2)
+        self.assertIn("只能在 Windows 上运行", out.getvalue())
+
+    def test_elevate_accepted_says_where_to_look(self):
+        out = io.StringIO()
+        with mock.patch.object(cli.winapi, "is_admin", return_value=False), mock.patch.object(
+            cli.winapi, "elevate", return_value=True
+        ), contextlib.redirect_stdout(out):
+            code = cli.main(["list", "--elevate"])
+        self.assertEqual(code, 0)
+        self.assertIn("UAC", out.getvalue())
+
+    def test_elevate_cancelled_keeps_going(self):
+        out = io.StringIO()
+        with mock.patch.object(cli.winapi, "is_admin", return_value=False), mock.patch.object(
+            cli.winapi, "elevate", return_value=False
+        ), mock.patch.object(cli.autostart, "scan", return_value=([self._entry()], [])), mock.patch.object(
+            cli.winapi, "processes", return_value=[]
+        ), contextlib.redirect_stdout(out):
+            code = cli.main(["list", "--elevate"])
+        self.assertEqual(code, 0)
+        self.assertIn("提权被取消", out.getvalue())
+
+    def test_elevate_is_skipped_when_already_admin(self):
+        with mock.patch.object(cli.winapi, "is_admin", return_value=True), mock.patch.object(
+            cli.winapi, "elevate"
+        ) as elevate, mock.patch.object(cli.autostart, "scan", return_value=([], [])), mock.patch.object(
+            cli.winapi, "processes", return_value=[]
+        ), contextlib.redirect_stdout(io.StringIO()):
+            code = cli.main(["list", "--elevate"])
+        self.assertEqual(code, 0)
+        elevate.assert_not_called()
+
+
 class TestCommandWiring(unittest.TestCase):
     """on / restore / backups / list --json 这几条命令行以前没有过 CLI 级测试。
 
