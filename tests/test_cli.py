@@ -12,7 +12,7 @@ import io
 import unittest
 from unittest import mock
 
-from pcxray import autostart, cli, procs, web
+from pcxray import actions, autostart, cli, procs, web
 
 
 def entry(name, kind="run", source="测试"):
@@ -321,6 +321,82 @@ class TestPortRange(unittest.TestCase):
                 code = cli.main(["web", "--port", value, "--no-browser"])
             self.assertEqual(code, 0, value)
             serve.assert_called_once()
+
+
+class TestCommandWiring(unittest.TestCase):
+    """on / restore / backups / list --json 这几条命令行以前没有过 CLI 级测试。
+
+    下层（actions）有测试，但「参数有没有传对、输出有没有打出来、退出码对不对」
+    这一层没人管。
+    """
+
+    def _entry(self):
+        return autostart.Entry(
+            name="OneDrive",
+            kind="run",
+            source="注册表 · 当前用户 Run",
+            scope="user",
+            locator={"hive": "HKCU", "subkey": "X", "value": "OneDrive"},
+        )
+
+    def test_list_json_prints_parseable_json(self):
+        out = io.StringIO()
+        with mock.patch.object(cli.autostart, "scan", return_value=([self._entry()], [])), mock.patch.object(
+            cli.winapi, "processes", return_value=[]
+        ), contextlib.redirect_stdout(out):
+            code = cli.main(["list", "--json"])
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["autostart"]["total"], 1)
+
+    def test_on_passes_force_and_mode(self):
+        with mock.patch.object(cli.autostart, "scan", return_value=([self._entry()], [])), mock.patch.object(
+            cli.actions, "enable", return_value=([actions.Result("OneDrive", True, "好")], "备份")
+        ) as enable, contextlib.redirect_stdout(io.StringIO()):
+            code = cli.main(["on", "OneDrive", "--force", "--mode", "move"])
+        self.assertEqual(code, 0)
+        kwargs = enable.call_args[1]
+        self.assertTrue(kwargs["force"])
+        self.assertEqual(kwargs["mode"], "move")
+
+    def test_restore_prints_which_backup_was_used(self):
+        out = io.StringIO()
+        with mock.patch.object(
+            cli.actions, "restore", return_value=([actions.Result("X", True, "已还原")], r"C:\b\1.json")
+        ), contextlib.redirect_stdout(out):
+            code = cli.main(["restore"])
+        self.assertEqual(code, 0)
+        self.assertIn("使用备份", out.getvalue())
+        self.assertIn("1.json", out.getvalue())
+
+    def test_backups_with_none_says_so(self):
+        out = io.StringIO()
+        with mock.patch.object(cli.actions, "list_backups", return_value=[]), contextlib.redirect_stdout(out):
+            code = cli.main(["backups"])
+        self.assertEqual(code, 0)
+        self.assertIn("还没有任何备份", out.getvalue())
+
+    def test_backups_shows_ten_and_counts_the_rest(self):
+        paths = [f"C:\\b\\2026010{i}-000000.json" for i in range(15)]
+        out = io.StringIO()
+        with mock.patch.object(cli.actions, "list_backups", return_value=paths), mock.patch.object(
+            cli.actions, "describe_backup", return_value=("2026-01-01 00:00:00", "1 项")
+        ), contextlib.redirect_stdout(out):
+            code = cli.main(["backups"])
+        text = out.getvalue()
+        self.assertEqual(code, 0)
+        self.assertEqual(text.count(".json"), 10)
+        self.assertIn("还有 5 份", text)
+
+    def test_backups_all_shows_everything(self):
+        paths = [f"C:\\b\\2026010{i}-000000.json" for i in range(15)]
+        out = io.StringIO()
+        with mock.patch.object(cli.actions, "list_backups", return_value=paths), mock.patch.object(
+            cli.actions, "describe_backup", return_value=("2026-01-01 00:00:00", "1 项")
+        ), contextlib.redirect_stdout(out):
+            code = cli.main(["backups", "--all"])
+        self.assertEqual(code, 0)
+        self.assertEqual(out.getvalue().count(".json"), 15)
 
 
 class TestPruneCommand(unittest.TestCase):

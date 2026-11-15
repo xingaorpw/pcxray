@@ -52,6 +52,81 @@ class TestUnavailable(unittest.TestCase):
 
 
 @unittest.skipUnless(pwsh.available(), "这台机器没有 PowerShell")
+class TestFailurePaths(unittest.TestCase):
+    """PowerShell 出各种问题时要给出能看懂的原因，不能返回空列表。
+
+    空列表和「真的没有计划任务」在界面上长得一模一样，用户会以为系统很干净。
+    这几条路径以前只有真机才碰得到，等于没测。
+    """
+
+    def setUp(self):
+        patcher = mock.patch.object(pwsh, "_exe", return_value="powershell.exe")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _run_with(self, timeout=90, **kwargs):
+        with mock.patch.object(pwsh.subprocess, "run", **kwargs):
+            return pwsh.run_json("Get-Thing", timeout=timeout)
+
+    def test_timeout_is_explained(self):
+        ok, data, reason = self._run_with(
+            timeout=30, side_effect=pwsh.subprocess.TimeoutExpired("x", 30)
+        )
+        self.assertFalse(ok)
+        self.assertIsNone(data)
+        self.assertIn("没返回", reason)
+        self.assertIn("30", reason, "提示里要写清楚等了多少秒")
+
+    def test_start_failure_is_explained(self):
+        ok, _data, reason = self._run_with(side_effect=OSError("拒绝访问"))
+        self.assertFalse(ok)
+        self.assertIn("启动 PowerShell 失败", reason)
+
+    def test_nonzero_exit_uses_stderr(self):
+        done = mock.Mock(returncode=5, stdout=b"", stderr="拒绝访问".encode("utf-8"))
+        ok, _data, reason = self._run_with(return_value=done)
+        self.assertFalse(ok)
+        self.assertIn("拒绝访问", reason)
+
+    def test_empty_output_and_zero_exit_is_success_with_none(self):
+        done = mock.Mock(returncode=0, stdout=b"", stderr=b"")
+        ok, data, reason = self._run_with(return_value=done)
+        self.assertTrue(ok)
+        self.assertIsNone(data)
+        self.assertEqual(reason, "")
+
+    def test_warning_line_before_json_is_skipped(self):
+        done = mock.Mock(
+            returncode=0,
+            stdout=b"WARNING: something\n[{\"Name\": \"X\"}]\n",
+            stderr=b"",
+        )
+        ok, data, _reason = self._run_with(return_value=done)
+        self.assertTrue(ok)
+        self.assertEqual(data, [{"Name": "X"}])
+
+    def test_gbk_output_is_decoded(self):
+        # 中文 Windows 的 PowerShell 可能按 GBK 吐字节
+        done = mock.Mock(returncode=0, stdout='{"Name": "微信"}'.encode("gbk"), stderr=b"")
+        ok, data, _reason = self._run_with(return_value=done)
+        self.assertTrue(ok, data)
+        self.assertEqual(data["Name"], "微信")
+
+    def test_long_stderr_is_truncated(self):
+        done = mock.Mock(returncode=1, stdout=b"", stderr=("错误" * 400).encode("utf-8"))
+        with mock.patch.object(pwsh.subprocess, "run", return_value=done):
+            ok, _text, reason = pwsh.run_text("x")
+        self.assertFalse(ok)
+        self.assertLessEqual(len(reason), 300)
+
+    def test_missing_powershell_does_not_look_like_empty(self):
+        with mock.patch.object(pwsh, "_exe", return_value=None):
+            ok, data, reason = pwsh.run_json("x")
+        self.assertFalse(ok)
+        self.assertIsNone(data)
+        self.assertIn("没找到 powershell", reason)
+
+
 class TestAgainstRealPowerShell(unittest.TestCase):
     def test_run_text_ok(self):
         ok, out, reason = pwsh.run_text("Write-Output 'hello'", timeout=30)
