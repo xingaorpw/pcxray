@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 import time
 
@@ -216,11 +217,32 @@ def _save_backup(ops: list[dict]) -> str:
     return path
 
 
+_BACKUP_NAME = re.compile(r"^(\d{8}-\d{6})(?:-(\d+))?$")
+
+
+def _backup_sort_key(path: str) -> tuple:
+    """按「时间戳 + 同秒内的序号」排，而不是按字符串排。
+
+    同一秒里连写几份时，`_reserve_backup_path` 会加 `-1`、`-2` 这样的后缀。
+    按字符串排是错的：`-` 比 `.` 小，所以 `20260101-000000.json` 排在
+    `20260101-000000-1.json` **前面**（前者反而更老）；而 `-10` 又排在
+    `-2` 前面。实测 12 份同秒备份时，`list_backups()` 的第一名是最老的那份
+    —— `restore` 不带参数就会还原到最旧的状态。
+    """
+    stem = os.path.basename(path)[:-5]  # 去掉 .json
+    match = _BACKUP_NAME.match(stem)
+    if match:
+        return (1, match.group(1), int(match.group(2) or 0))
+    # 认不出的文件名（用户自己改过名）排到最后，但不能丢
+    return (0, stem, 0)
+
+
 def list_backups() -> list[str]:
     if not os.path.isdir(BACKUP_DIR):
         return []
     return sorted(
         (os.path.join(BACKUP_DIR, n) for n in os.listdir(BACKUP_DIR) if n.endswith(".json")),
+        key=_backup_sort_key,
         reverse=True,
     )
 

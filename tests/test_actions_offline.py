@@ -154,10 +154,48 @@ class TestBackupFiles(unittest.TestCase):
         self.assertEqual(leftovers, [])
 
     def test_list_is_newest_first(self):
-        for name in ("A", "B", "C"):
-            actions._save_backup([{"kind": "flag", "name": name}])
-        listed = actions.list_backups()
-        self.assertEqual(listed, sorted(listed, reverse=True))
+        made = [actions._save_backup([{"kind": "flag", "name": name}]) for name in ("A", "B", "C")]
+        # 断言的是「新的在前」这个意思，不是「按字符串倒序」—— 后者只在
+        # 同一秒没有重名后缀时才和前者等价（上一版就是这么写的，于是没发现
+        # 同秒多份时顺序是反的）。
+        self.assertEqual(actions.list_backups(), list(reversed(made)))
+
+    def test_same_second_backups_sort_newest_first(self):
+        """同一秒里连写 12 份，最新的必须排第一。
+
+        名字长这样：`20260101-000000.json`、`-1.json` … `-11.json`。
+        按字符串排是错的：`-` 比 `.` 小，所以不带后缀的那份（最老）排最前，
+        而 `-10`、`-11` 排到 `-2` 前面。实测 12 份时 `list_backups()` 的
+        第一名是最老那份 —— `restore` 不带参数就会还原到最旧的状态。
+        """
+        stamp = "20260101-000000"
+        names = [f"{stamp}.json"] + [f"{stamp}-{i}.json" for i in range(1, 13)]
+        for name in names:
+            with open(os.path.join(self.tmp.name, name), "w", encoding="utf-8") as handle:
+                handle.write("{}")
+        listed = [os.path.basename(p) for p in actions.list_backups()]
+        self.assertEqual(listed[0], f"{stamp}-12.json", f"第一名不是最新的：{listed[:3]}")
+        self.assertEqual(listed[-1], f"{stamp}.json", f"最后一名不是最老的：{listed[-3:]}")
+        self.assertEqual(listed, list(reversed(names)))
+
+    def test_prune_keeps_the_newest_of_a_same_second_batch(self):
+        stamp = "20260101-000000"
+        names = [f"{stamp}.json"] + [f"{stamp}-{i}.json" for i in range(1, 6)]
+        for name in names:
+            with open(os.path.join(self.tmp.name, name), "w", encoding="utf-8") as handle:
+                handle.write("{}")
+        actions.prune(2)
+        left = sorted(os.listdir(self.tmp.name))
+        self.assertEqual(left, [f"{stamp}-4.json", f"{stamp}-5.json"], f"留下的不是最新的两份：{left}")
+
+    def test_unknown_backup_name_does_not_break_sorting(self):
+        with open(os.path.join(self.tmp.name, "20260101-000000.json"), "w", encoding="utf-8") as handle:
+            handle.write("{}")
+        with open(os.path.join(self.tmp.name, "我自己改的名字.json"), "w", encoding="utf-8") as handle:
+            handle.write("{}")
+        listed = [os.path.basename(p) for p in actions.list_backups()]
+        self.assertEqual(len(listed), 2, "认不出名字的备份不能丢")
+        self.assertEqual(listed[0], "20260101-000000.json", f"认不出的名字应该排后面：{listed}")
 
     def test_parallel_saves_all_get_unique_files(self):
         """同一秒里 12 个请求同时要备份，不能有两个抢到同一个文件。
