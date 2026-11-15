@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import math
+
 import unicodedata
 
 __all__ = ["width", "pad", "truncate", "table", "wrap"]
@@ -138,9 +140,17 @@ def wrap(text: str, limit: int, indent: str = "") -> list[str]:
 
 
 def mb(value: float) -> str:
-    """内存的易读写法。"""
-    if value >= 1024:
+    """内存的易读写法。
+
+    两个坑：`1023.9` 会被 `:.0f` 四舍五入成「1024 MB」（该进位成 GB 了），
+    负数走 `< 1` 分支会显示成「-1024 KB」。单位判断要看**显示出来的**数，
+    不能看原始数。
+    """
+    if not math.isfinite(value):
+        # nan / inf 不该出现（都是相加来的），但真出现时别把 "nan KB" 甩给用户
+        return "—"
+    if abs(value) >= 1023.5:  # 会四舍五入成 1024 MB，直接进位
         return f"{value / 1024:.1f} GB"
-    if value >= 1:
+    if abs(value) >= 1:
         return f"{value:.0f} MB"
     return f"{value * 1024:.0f} KB"

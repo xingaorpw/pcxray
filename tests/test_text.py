@@ -185,5 +185,30 @@ class TestWrapCjkPunctuation(unittest.TestCase):
         self.assertEqual(text.wrap("第一行\n第二行", 40), ["第一行", "第二行"])
 
 
+class TestMbRounding(unittest.TestCase):
+    """单位判断要看显示出来的数，不能看原始数。
+
+    `1023.9` 会被 `:.0f` 四舍五入成「1024 MB」，该进位成 GB 了；负数走
+    `< 1` 分支会显示成「-1024 KB」。
+    """
+
+    def test_just_under_a_gigabyte_becomes_gigabytes(self):
+        self.assertEqual(text.mb(1023.9), "1.0 GB")
+
+    def test_negative_megabytes_keep_the_megabyte_unit(self):
+        self.assertEqual(text.mb(-1), "-1 MB")
+        self.assertEqual(text.mb(-500), "-500 MB")
+
+    def test_nan_and_inf_do_not_leak_into_the_output(self):
+        self.assertEqual(text.mb(float("nan")), "—")
+        self.assertEqual(text.mb(float("inf")), "—")
+
+    def test_normal_values_unchanged(self):
+        self.assertEqual(text.mb(0), "0 KB")
+        self.assertEqual(text.mb(0.5), "512 KB")
+        self.assertEqual(text.mb(512), "512 MB")
+        self.assertEqual(text.mb(2048), "2.0 GB")
+
+
 if __name__ == "__main__":
     unittest.main()

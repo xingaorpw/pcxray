@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 import unittest
 
 from pcxray import procs, winapi
@@ -218,6 +219,25 @@ class TestWindowsFlag(unittest.TestCase):
 
     def test_not_hidden_when_visible(self):
         self.assertFalse(winapi.Windows(total=5, visible=1).hidden)
+
+
+class TestFutureStartTimeIsCalledOut(unittest.TestCase):
+    """系统时间被往回调过时，进程的启动时间会「在未来」。
+
+    直接显示一个未来时刻，用户会当成正常启动时间 —— 得说清楚。
+    """
+
+    def test_future_timestamp_is_flagged(self):
+        now = time.time()
+        text = procs.describe_started(now + 3600, 0)
+        self.assertIn("在未来", text)
+
+    def test_normal_timestamp_is_not_flagged(self):
+        now = time.time()
+        self.assertNotIn("在未来", procs.describe_started(now - 60, 0))
+
+    def test_unknown_stays_unknown(self):
+        self.assertEqual(procs.describe_started(0, 0), "启动时间未知")
 
 
 if __name__ == "__main__":

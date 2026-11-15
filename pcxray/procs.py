@@ -195,4 +195,8 @@ def describe_started(when: float, logon: float) -> str:
         return f"{clock} 随登录启动"
     if logon and when < logon:
         return f"{clock} 登录前启动"
+    if when > time.time() + 60:
+        # 系统时间被往回调过（对时、换时区、手动改），进程的启动时间就会「在未来」。
+        # 直接显示一个未来时刻会被当成正常启动时间，得说清楚。
+        return f"{clock} 启动（时间在未来，系统时钟可能被改过）"
     return f"{clock} 启动"
