@@ -25,6 +25,14 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **当前用户的 32 位自启项一条都看不到。** `RUN_KEYS` 里只有 `HKLM` 的
+  `WOW6432Node`，`HKCU` 那份整份漏了。实测往
+  `HKCU\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Run` 写一个值，
+  `pcxray list` 和 `--kind run32` 都是 0 条 —— 写它不需要管理员，32 位程序装给
+  自己用的自启项就在这儿，也是一些恶意程序喜欢藏的地方。现在四个「视图」
+  （HKCU/HKLM × 64/32 位）两种键（Run/RunOnce）全都扫，并加了一条测试锁死
+  这八个位置（少一个就红，反证过）。端到端也验了：`off` 写的是
+  `StartupApproved\Run32` 那一栏（不是 `Run`），`restore` 能删干净。
 - **第三条漏网的路：底部「读不到的部分」提示。** 那块直接拼 `problems`，里面
   可能是 PowerShell 的原始报错（CRLF）和服务名 —— `\x1b[2J` 照样清屏，`\r` 照样
   冲掉整行。现在压成一行并换成看得见的写法。

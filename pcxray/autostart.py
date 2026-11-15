@@ -44,6 +44,12 @@ RUN_KEYS = (
     ("HKLM", r"Software\Microsoft\Windows\CurrentVersion\Run", "machine", "run", "注册表 · 所有用户 Run"),
     ("HKLM", r"Software\Microsoft\Windows\CurrentVersion\RunOnce", "machine", "runonce", "注册表 · 所有用户 RunOnce"),
     ("HKLM", r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Run", "machine", "run32", "注册表 · 所有用户 Run（32 位）"),
+    # 当前用户的 32 位视图以前整个漏掉了：写它不需要管理员，32 位程序装给自己
+    # 用的自启项就在这儿，也是一些恶意程序喜欢藏的地方。实测过 —— 往这里写一个
+    # 值，以前 `pcxray list` 一条都看不到。
+    ("HKCU", r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Run", "user", "run32", "注册表 · 当前用户 Run（32 位）"),
+    ("HKCU", r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\RunOnce", "user", "runonce", "注册表 · 当前用户 RunOnce（32 位）"),
+    ("HKLM", r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\RunOnce", "machine", "runonce", "注册表 · 所有用户 RunOnce（32 位）"),
 )
 
 APPROVED_BASE = r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved"

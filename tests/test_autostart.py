@@ -291,6 +291,31 @@ class TestEntry(unittest.TestCase):
         self.assertIn("禁用", repr(e))
 
 
+class TestEveryRunKeyViewIsScanned(unittest.TestCase):
+    """四个「视图」× 两种键，一个都不能漏。
+
+    Windows 的注册表重定向让 32 位程序看到的是 `WOW6432Node` 那套键。当前用户的
+    那份写它不需要管理员 —— 32 位程序装给自己用的自启项、以及一些恶意程序喜欢
+    藏的地方都在那儿。以前只扫了 HKLM 的 32 位视图，HKCU 的整份漏掉：实测往
+    `HKCU\\Software\\WOW6432Node\\...\\Run` 写一个值，`pcxray list` 一条都看不到。
+    """
+
+    def test_all_eight_views_are_present(self):
+        found = {(hive, subkey) for hive, subkey, _scope, _kind, _label in autostart.RUN_KEYS}
+        expected = set()
+        for hive in ("HKCU", "HKLM"):
+            for middle in ("Software", r"Software\WOW6432Node"):
+                for leaf in ("Run", "RunOnce"):
+                    expected.add((hive, middle + "\\Microsoft\\Windows\\CurrentVersion\\" + leaf))
+        self.assertEqual(expected - found, set(), "这些位置没扫")
+        self.assertEqual(found - expected, set(), "多了不该扫的位置")
+
+    def test_32bit_entries_use_the_run32_approval_column(self):
+        for hive, subkey, _scope, kind, _label in autostart.RUN_KEYS:
+            if "WOW6432Node" in subkey:
+                self.assertEqual(kind, "run32" if subkey.endswith("\\Run") else "runonce", subkey)
+
+
 class TestWeirdRegistryValueTypes(unittest.TestCase):
     """Run 里的值不一定是字符串。
 
