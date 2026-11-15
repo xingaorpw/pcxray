@@ -313,17 +313,21 @@ class Handler(BaseHTTPRequestHandler):
             # 一次改一堆是最容易后悔的操作，强制拆开
             self._json(400, {"ok": False, "error": "一次最多改 20 条"})
             return
-        entries = _STATE["entries"] or []
-        picked = [e for e in entries if e.key in keys]
-        if not picked:
-            self._json(400, {"ok": False, "error": "找不到这些条目，可能已经变了，刷新一下"})
-            return
         turn_on = parsed.path == "/api/on"
         force = bool(body.get("force"))
-        results, backup = (
-            actions.enable(picked, force=force) if turn_on else actions.disable(picked, force=force)
-        )
-        _STATE["report"] = None  # 下次取报告重新扫
+        # 改状态这一段必须在锁里：不然会出现「改完了，页面还是旧的」——
+        # 一次并发的刷新可能正好在写之前扫完，把旧结果写进缓存，而我们的
+        # 作废标记在那之前就被覆盖掉了。
+        with _LOCK:
+            entries = _STATE["entries"] or []
+            picked = [e for e in entries if e.key in keys]
+            if not picked:
+                self._json(400, {"ok": False, "error": "找不到这些条目，可能已经变了，刷新一下"})
+                return
+            results, backup = (
+                actions.enable(picked, force=force) if turn_on else actions.disable(picked, force=force)
+            )
+            _STATE["report"] = None  # 下次取报告重新扫
         self._json(
             200,
             {

@@ -444,5 +444,69 @@ class TestBindAddress(unittest.TestCase):
             server.server_close()
 
 
+class TestStateChangeIsSerialised(unittest.TestCase):
+    """改状态和重扫不能交错。
+
+    以前 POST 直接改 `_STATE`，不加锁：一次并发的刷新可能正好在写之前扫完，
+    把旧结果写进缓存，而 POST 的作废标记在那之前就被覆盖了 —— 用户点了「关掉」，
+    刷新后那一行还是「启用」。
+    """
+
+    def setUp(self):
+        self.server = web.make_server(port=0)
+        self.addCleanup(self.server.server_close)
+        self.token = self.server.token
+        thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(self.server.shutdown)
+
+    def test_post_waits_for_the_rescan_to_finish(self):
+        started = threading.Event()
+        release = threading.Event()
+        real_scan = autostart.scan
+
+        def slow_scan(*args, **kwargs):
+            started.set()
+            release.wait(5)
+            return real_scan(*args, **kwargs)
+
+        with mock.patch.object(autostart, "scan", slow_scan):
+            rebuild = threading.Thread(target=lambda: web._snapshot(force=True), daemon=True)
+            rebuild.start()
+            self.assertTrue(started.wait(5), "重扫没开始")
+
+            done = threading.Event()
+
+            def post():
+                self._post()
+                done.set()
+
+            poster = threading.Thread(target=post, daemon=True)
+            poster.start()
+            # 重扫还占着锁，POST 必须等着 —— 等不到说明没锁住
+            self.assertFalse(done.wait(0.5), "重扫还在跑，POST 就已经改完状态了")
+            release.set()
+            self.assertTrue(done.wait(10), "放行之后 POST 还是没完成")
+            rebuild.join(5)
+
+    def _post(self):
+        port = self.server.server_address[1]
+        body = json.dumps({"keys": ["不存在的键"]}).encode()
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{port}/api/off",
+            data=body,
+            headers={
+                "X-PCXRAY-Token": self.token,
+                "Content-Type": "application/json",
+                "Origin": f"http://127.0.0.1:{port}",
+            },
+            method="POST",
+        )
+        try:
+            urllib.request.urlopen(request, timeout=10).read()
+        except urllib.error.HTTPError:
+            pass  # 400 也是「处理完了」
+
+
 if __name__ == "__main__":
     unittest.main()
