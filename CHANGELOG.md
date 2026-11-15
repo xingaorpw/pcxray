@@ -25,6 +25,9 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **`pcxray off ""` 的提示看不出哪里错了。** 引号没写对时最容易出现这种输入，
+  原来只报「✗ 　没有这一条」—— 名字那一段是空的。现在报「名字不能是空的，写要关
+  的那一条的名字或 id」。
 - **还原会假装还原它看不懂的东西。** 备份里出现这个版本不认识的 `kind`（新版本
   写的、手改过、从别的机器拷来的），以前一条都还不了也照样退出 0，用户以为注册表
   回去了；`kind` 缺失时更会直接 `KeyError` 打出一屏 traceback。现在会报「这份备份

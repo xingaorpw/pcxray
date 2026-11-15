@@ -237,6 +237,27 @@ class _StubReport:
         self.problems: list[str] = []
 
 
+class TestEmptyNameIsExplained(unittest.TestCase):
+    """`pcxray off ""` 是引号没写对时最容易出现的输入。
+
+    原来的提示是「✗ 　没有这一条」，名字那一段是空的，看不出是哪里错了。
+    """
+
+    def test_empty_name_gets_its_own_message(self):
+        picked, problems = cli._pick([], ["", "   "])
+        self.assertEqual(picked, [])
+        self.assertEqual(len(problems), 2)
+        for problem in problems:
+            self.assertIn("名字不能是空的", problem.message)
+
+    def test_off_with_empty_name_exits_nonzero(self):
+        out = io.StringIO()
+        with mock.patch.object(cli, "_load_entries", return_value=([], [])), contextlib.redirect_stdout(out):
+            code = cli.main(["off", "", "--dry-run"])
+        self.assertEqual(code, 1)
+        self.assertIn("名字不能是空的", out.getvalue())
+
+
 class TestPruneCommand(unittest.TestCase):
     def test_zero_keep_exits_2(self):
         out, err = io.StringIO(), io.StringIO()

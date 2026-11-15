@@ -303,6 +303,11 @@ def _pick(entries, names: list[str]) -> tuple[list[autostart.Entry], list[action
     picked: list[autostart.Entry] = []
     problems: list[actions.Result] = []
     for name in names:
+        if not (name or "").strip():
+            # `pcxray off ""` 是引号没写对时最容易出现的输入。原来的提示是
+            # 「✗ 　没有这一条」，名字那一段是空的，看不出是哪里错了。
+            problems.append(actions.Result("（空名字）", False, "名字不能是空的，写要关的那一条的名字或 id"))
+            continue
         hit, candidates = resolve(entries, name)
         if hit is not None:
             picked.append(hit)
