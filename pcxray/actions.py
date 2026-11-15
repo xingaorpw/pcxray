@@ -76,7 +76,18 @@ def _hive(name: str):
     return {"HKCU": winreg.HKEY_CURRENT_USER, "HKLM": winreg.HKEY_LOCAL_MACHINE}[name]
 
 
+_APPROVED_KINDS = ("run", "run32", "runonce", "folder")
+
+
 def _approved_subkey(kind: str) -> str:
+    """`StartupApproved` 里对应哪一栏。
+
+    只对注册表 Run 和启动文件夹有意义 —— 计划任务和服务是另外的开关机制，
+    以前这里对它们也返回 `\Run`，等于给了一个会写错地方的后门。现在直接抛错，
+    将来谁接错分支都会当场炸，而不是悄悄往 Run 栏里塞一条没用的记录。
+    """
+    if kind not in _APPROVED_KINDS:
+        raise ValueError(f"{kind} 不走 StartupApproved 开关，别往 Run 栏写")
     base = r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved"
     if kind == "folder":
         return base + r"\StartupFolder"

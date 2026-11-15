@@ -212,8 +212,12 @@ def _read_values(hive_name: str, subkey: str) -> list[tuple[str, object, int]]:
 def decode_approved(value) -> bool | None:
     """把 `StartupApproved` 的值翻译成 启用 / 禁用。
 
-    实测：`02…` 启用、`04…` 禁用（本机 HKLM 里 SecurityHealth、LVAPRCU、
-    preinsassoguard 三条都是 04）。`06` 也出现过，按启用算。
+    判定规则只有一条：**首字节是 2 或 6 就算启用，其它都算禁用**。
+
+    实测到两种「禁用」写法：任务管理器自己写的是 `03 00 00 00` + 8 字节
+    FILETIME（禁用的时刻），本机 HKLM 里 SecurityHealth、LVAPRCU 那几条是
+    别的工具写的 `04 00 00 00` + 8 个零。两种都按禁用算 —— 我们只认首字节，
+    不认时间戳，因为时间戳的内容各家不一样。
     没有记录、或者是 `REG_SZ` 的脏值（本机真有一条空的 GalaxyClient）→ None，
     意思是「系统没记过状态」，也就是默认启用。
 

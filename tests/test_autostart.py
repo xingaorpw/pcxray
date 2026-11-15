@@ -35,6 +35,28 @@ class TestDecodeApproved(unittest.TestCase):
     def test_none_is_unknown(self):
         self.assertIsNone(autostart.decode_approved(None))
 
+    def test_what_we_write_is_what_we_can_read_back(self):
+        """工具写进去的标记，自己必须能读回来。
+
+        这条看着废话，但它防的是一个真事故：写入用一套编码、读取用另一套，
+        于是「关掉」之后界面还显示「启用」，用户会以为没生效然后反复点。
+        """
+        from pcxray import actions
+
+        self.assertTrue(autostart.decode_approved(actions._ENABLED))
+        self.assertFalse(autostart.decode_approved(actions._disabled_now()))
+
+    def test_written_disabled_flag_is_the_task_manager_form(self):
+        # 任务管理器自己写的是 03 + 8 字节时间戳（禁用时刻）。别写 04 + 零：
+        # 那种形式是别的工具写的，也能用，但跟我们声称「等于在任务管理器里点禁用」不符。
+        from pcxray import actions
+
+        flag = actions._disabled_now()
+        self.assertEqual(len(flag), 12)
+        self.assertEqual(flag[0], 0x03)
+        self.assertEqual(actions._ENABLED[0], 0x02)
+        self.assertEqual(len(actions._ENABLED), 12)
+
     def test_one_byte_enough(self):
         self.assertTrue(autostart.decode_approved(b"\x02"))
 
