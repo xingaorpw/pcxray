@@ -98,6 +98,10 @@ def table(
     return lines
 
 
+# 这些字符不能出现在一行的开头。中文排版里叫「禁则字符」。
+_NO_LINE_START = set("，。、；：？！）】》」』%…·’”")
+
+
 def wrap(text: str, limit: int, indent: str = "") -> list[str]:
     """按显示宽度折行。
 
@@ -122,6 +126,11 @@ def wrap(text: str, limit: int, indent: str = "") -> list[str]:
                 else:
                     lines.append(current)
                     current, used = "", 0
+            # 中文标点不能出现在行首（「，而不是…」这种读起来像错行）。遇到这种
+            # 字符就让它跟着上一行走，宁可这一行超一个字的宽度。
+            if not current and ch in _NO_LINE_START and lines:
+                lines[-1] += ch
+                continue
             current += ch
             used += w
         lines.append(current)

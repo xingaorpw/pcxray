@@ -151,5 +151,39 @@ class TestWrap(unittest.TestCase):
         self.assertEqual(lines, ["a", "b"])
 
 
+class TestWrapCjkPunctuation(unittest.TestCase):
+    """中文标点不能出现在行首。
+
+    以前按宽度硬断，断点正好落在逗号前面，于是下一行以「，而不是…」开头 ——
+    读起来像错行，而这是中文输出里最常见的一句话。
+    """
+
+    def test_comma_does_not_start_a_line(self):
+        text_ = "这是一段很长的中文说明文字，用来测试换行是不是按显示宽度算的，而不是按字符个数算的。"
+        for line in text.wrap(text_, 30):
+            stripped = line.strip()
+            self.assertNotIn(stripped[:1], "，。、；：？！）】》」』", line)
+
+    def test_period_does_not_start_a_line(self):
+        for line in text.wrap("第一句说完了。第二句也要说很长很长很长才行。", 20):
+            self.assertNotIn(line.strip()[:1], "。，", line)
+
+    def test_english_wrapping_still_works(self):
+        lines = text.wrap("alpha beta gamma delta epsilon", 12)
+        self.assertTrue(all(text.width(line) <= 12 for line in lines), lines)
+
+    def test_single_long_token_is_split_but_nothing_is_lost(self):
+        # 一个超长的词（路径）只能硬拆，但不能丢字
+        path = "C:\\" + "a" * 60 + ".exe"
+        lines = text.wrap(path, 20)
+        self.assertGreater(len(lines), 1)
+        self.assertEqual("".join(lines), path)
+        for line in lines[:-1]:
+            self.assertLessEqual(text.width(line), 20, line)
+
+    def test_explicit_newline_is_respected(self):
+        self.assertEqual(text.wrap("第一行\n第二行", 40), ["第一行", "第二行"])
+
+
 if __name__ == "__main__":
     unittest.main()
