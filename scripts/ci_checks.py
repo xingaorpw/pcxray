@@ -391,6 +391,28 @@ def check_page_js_filters() -> None:
     check("搜不到时说的是搜不到，不是「这一类没有」", "没有匹配" in plain and "全部常用" in plain, plain.strip()[:60])
 
 
+def check_readme_test_count() -> None:
+    """README 徽章上的测试数必须等于真实测试数。
+
+    这个数字是手写的，改测试时很容易忘了同步 —— 以前就写错过（441 vs 439）。
+    数字不许拍，只能数。
+    """
+    import unittest
+
+    loader = unittest.TestLoader()
+    total = loader.discover("tests", top_level_dir=".").countTestCases()
+
+    with open("README.md", encoding="utf-8") as handle:
+        readme = handle.read()
+    badge = re.search(r"tests-(\d+)%20passed", readme)
+    body = re.search(r"# (\d+) 个测试", readme)
+    if not badge or not body:
+        check("README 里有测试数徽章", False, "没找到 tests-N%20passed 或「# N 个测试」")
+        return
+    check("README 徽章数 = 真实测试数", int(badge.group(1)) == total, f"徽章 {badge.group(1)}，实际 {total}")
+    check("README 正文数 = 真实测试数", int(body.group(1)) == total, f"正文 {body.group(1)}，实际 {total}")
+
+
 def main() -> int:
     print("端到端自检")
     check_bad_arguments()
@@ -401,6 +423,7 @@ def main() -> int:
     check_page_js_filters()
     check_no_handle_leak()
     check_json_contract()
+    check_readme_test_count()
     print()
     if FAILED:
         print(f"  {len(FAILED)} 项没通过：{'、'.join(FAILED)}")
