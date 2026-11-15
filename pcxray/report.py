@@ -307,11 +307,17 @@ def render(report: Report, limit: int = 0, only: str = "") -> list[str]:
             f"已用 {text.mb(used / 1048576)}  "
             f"可用 {text.mb(report.avail_ram / 1048576)}"
         )
-    if report.logon:
-        lines.append(
-            f"  开机 {time.strftime('%m-%d %H:%M', time.localtime(report.boot))}"
-            f"　登录 {time.strftime('%m-%d %H:%M', time.localtime(report.logon))}"
-        )
+    if report.boot:
+        boot_text = time.strftime("%m-%d %H:%M", time.localtime(report.boot))
+        if report.logon:
+            lines.append(
+                f"  开机 {boot_text}"
+                f"　登录 {time.strftime('%m-%d %H:%M', time.localtime(report.logon))}"
+            )
+        else:
+            # 读不到 explorer、也没有可读的进程启动时间。这时候写「登录 03:54」
+            # 就是把开机时间冒充成登录时间 —— 宁可说不知道。
+            lines.append(f"  开机 {boot_text}　登录时间未知")
     lines.append(
         f"  进程 {report.process_count} 个"
         f"　自启 {len(report.items)} 条（启用 {len(report.enabled)}）"
@@ -420,7 +426,8 @@ def render(report: Report, limit: int = 0, only: str = "") -> list[str]:
 
     # ---- 提示
     notes: list[str] = []
-    if not report.admin:
+    if not report.admin and report.unreadable:
+        # 一个都读不到时（比如空机器）这句话没有信息量，只会让人以为自己漏看了什么
         notes.append(
             f"不是管理员：{report.unreadable} 个进程读不到路径和启动时间。"
             "要完整信息用 pcxray list --elevate"
@@ -434,4 +441,10 @@ def render(report: Report, limit: int = 0, only: str = "") -> list[str]:
         for note in notes:
             lines.append(f"  · {note}")
     lines.append("")
-    return lines
+    # 没有任何表格区块时，上面会留下相邻的空行 —— 压成一个
+    collapsed: list[str] = []
+    for line in lines:
+        if line == "" and collapsed and collapsed[-1] == "":
+            continue
+        collapsed.append(line)
+    return collapsed

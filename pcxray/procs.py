@@ -66,7 +66,7 @@ def logon_time(procs: list[winapi.Process]) -> float:
     """登录时刻的估计值。
 
     优先用 explorer.exe 的启动时间（shell 起来 = 用户登录完成）。
-    拿不到就退回所有可读进程里最早的那个，再拿不到退回开机时间。
+    拿不到就退回所有可读进程里最早的那个；再拿不到返回 0（= 不知道）。
     """
     for proc in procs:
         if proc.name.lower() == "explorer.exe" and proc.started:
@@ -74,7 +74,9 @@ def logon_time(procs: list[winapi.Process]) -> float:
     candidates = [p.started for p in procs if p.started and p.readable]
     if candidates:
         return min(candidates)
-    return winapi.boot_time()
+    # 什么都不知道就返回 0，不要拿开机时间冒充登录时间 —— 那会让界面打出
+    # 「开机 03:54　登录 03:54」这种看起来精确、其实是编的数字。
+    return 0.0
 
 
 def group(procs: list[winapi.Process]) -> list[Group]:

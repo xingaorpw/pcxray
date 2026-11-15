@@ -194,16 +194,101 @@ def suspect_path(path: str) -> str:
 
 
 # 「启动时不显示窗口」这类参数。不是罪证，但值得知道。
-_HIDDEN = re.compile(
-    r"(?:--silent|-silent|--background|--no-startup-window|--open-at-login|"
-    r"--launch-from=loginitem|-windowstyle\s+hidden|--wake|/hb:|--minimized|"
-    r"--hidden|/background)",
-    re.IGNORECASE,
+# 「启动时不显示窗口」这类参数。不是罪证，但值得知道。
+#
+# 只在**参数部分**逐个 token 精确比，不在整条命令行里找子串。子串匹配会把
+# 路径里的目录名（`C:\tools\--silent\x.exe`）和长得像的开关
+# （`--background-color=red`、`/backgroundtask`）全判成「不显窗」——
+# 这个标记本来只是提示，误报多了就变成噪音，用户会开始忽略它。
+_HIDDEN_FLAGS = frozenset(
+    {
+        "--silent",
+        "-silent",
+        "/silent",
+        "--background",
+        "-background",
+        "/background",
+        "--no-startup-window",
+        "--open-at-login",
+        "--launch-from=loginitem",
+        "--wake",
+        "--minimized",
+        "-minimized",
+        "/minimized",
+        "--hidden",
+        "-hidden",
+        "/hidden",
+        "/min",
+        "-min",
+        "--tray",
+        "-tray",
+        "/tray",
+    }
 )
+# 这些前缀后面再跟 `-`/`_`/`:` 也算（`--silent-start`、`--background-service`）。
+# 只认「前缀 + 分隔符」，不认「前缀直接接字母」—— 那样 `/backgroundtask`
+# 又会被误判。
+_HIDDEN_PREFIXES = (
+    "--silent",
+    "-silent",
+    "/silent",
+    "--background",
+    "-background",
+    "--hidden",
+    "-hidden",
+    "--minimized",
+    "-minimized",
+    "--tray",
+    "-tray",
+)
+# 长得像、其实不是「不显示窗口」的参数
+_HIDDEN_EXCEPTIONS = ("--background-color", "--background-image", "/backgroundtask")
+
+# `-windowstyle hidden` 是分开的两个 token
+_HIDDEN_PAIRS = {("-windowstyle", "hidden"), ("-w", "hidden")}
 
 
 def hidden_args(command: str) -> bool:
-    return bool(_HIDDEN.search(command or ""))
+    """启动参数里有没有「别显示窗口」的意思。
+
+    只看 exe 之后的参数，逐个 token 比；`--flag=value` 形式按 `=` 前半段比。
+    """
+    args = _args_of(command)
+    tokens = [t.strip("\"'").lower() for t in args.split()]
+    for token in tokens:
+        head = token.split("=", 1)[0]
+        if head.startswith(_HIDDEN_EXCEPTIONS):
+            continue
+        if token in _HIDDEN_FLAGS or head in _HIDDEN_FLAGS:
+            return True
+        for prefix in _HIDDEN_PREFIXES:
+            if head.startswith(prefix) and head[len(prefix) :][:1] in ("-", "_", ":"):
+                return True
+    for left, right in zip(tokens, tokens[1:]):
+        if (left, right) in _HIDDEN_PAIRS:
+            return True
+    return False
+
+
+def _args_of(command: str) -> str:
+    """命令行里 exe 之后的那一段。
+
+    按第一个 `.exe` 截断（和 `exe_of` 同一套规则）：没加引号但路径带空格的
+    命令行也能切对。
+    """
+    text = (command or "").strip()
+    if not text:
+        return ""
+    lowered = text.lower()
+    cut = lowered.find(".exe")
+    if cut >= 0:
+        return text[cut + 4 :].strip()
+    if text.startswith('"'):
+        end = text.find('"', 1)
+        if end > 0:
+            return text[end + 1 :].strip()
+    parts = text.split(None, 1)
+    return parts[1].strip() if len(parts) > 1 else ""
 
 
 def refuse_reason(

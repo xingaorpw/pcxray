@@ -77,9 +77,14 @@ class TestLogonTime(unittest.TestCase):
         ps = [fake(1, "a.exe", started=700), fake(2, "b.exe", started=300, readable=False)]
         self.assertEqual(procs.logon_time(ps), 700)
 
-    def test_empty_returns_boot_time(self):
-        # 没有进程时退回开机时间。两次调用会差几毫秒，所以给 1 秒容差。
-        self.assertAlmostEqual(procs.logon_time([]), winapi.boot_time(), delta=1.0)
+    def test_empty_returns_unknown_not_boot_time(self):
+        # 没有进程可读时，登录时间就是「不知道」。以前返回开机时间，界面上会
+        # 打出「开机 03:54　登录 03:54」—— 看起来是精确测量，其实是编的。
+        self.assertEqual(procs.logon_time([]), 0.0)
+
+    def test_unreadable_only_returns_unknown(self):
+        ps = [fake(1, "a.exe", started=700, readable=False)]
+        self.assertEqual(procs.logon_time(ps), 0.0)
 
 
 class TestPathHelpers(unittest.TestCase):

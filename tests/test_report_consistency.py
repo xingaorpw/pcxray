@@ -10,6 +10,7 @@ import unittest
 from unittest import mock
 
 from pcxray import autostart, procs, report, winapi
+from pcxray.report import render
 
 
 def fake_proc(pid: int, path: str, mb: float) -> winapi.Process:
@@ -215,6 +216,42 @@ class TestBackgroundGrouping(unittest.TestCase):
         proc.windows = winapi.Windows(total=1, visible=1)
         rep = build([], [proc])
         self.assertEqual(rep.background, [])
+
+
+class TestEmptyMachine(unittest.TestCase):
+    """空机器（0 条自启、0 个进程）不能崩，也不能编数据。"""
+
+    def setUp(self):
+        self.rep = build([], [])
+        # 这个文件里的 build() 把 boot_time 打成 0 了，这里给个固定值，
+        # 否则「开机时间未知 + 登录时间未知」两行都不出现，测了个寂寞
+        self.rep.boot = 1794390000.0
+        self.lines = render(self.rep)
+
+    def test_does_not_crash(self):
+        self.assertTrue(self.lines)
+
+    def test_unknown_logon_is_not_faked_as_boot_time(self):
+        # 以前会退回开机时间，界面打出「开机 03:54　登录 03:54」——
+        # 看起来是精确测量，其实是同一个数抄了两遍。
+        text = "\n".join(self.lines)
+        self.assertIn("登录时间未知", text)
+        self.assertEqual(self.rep.logon, 0.0)
+
+    def test_no_zero_process_note(self):
+        # 「不是管理员：0 个进程读不到路径」纯属噪音
+        text = "\n".join(self.lines)
+        self.assertNotIn("0 个进程读不到", text)
+
+    def test_no_double_blank_lines(self):
+        for prev, cur in zip(self.lines, self.lines[1:]):
+            self.assertFalse(prev == "" and cur == "", "出现了连续两个空行")
+
+    def test_json_is_serialisable(self):
+        data = self.rep.as_dict()
+        self.assertEqual(data["autostart"]["total"], 0)
+        self.assertEqual(data["autostart"]["items"], [])
+        self.assertEqual(data["background"], [])
 
 
 class TestGroupCoverage(unittest.TestCase):

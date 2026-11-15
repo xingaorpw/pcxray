@@ -338,6 +338,62 @@ class TestSecurityHeaders(ServerCase):
             self.assertEqual(response.headers["Cache-Control"], "no-store")
 
 
+class TestNoUnescapedInterpolation(unittest.TestCase):
+    """页面里凡是往 HTML 里塞「来自系统」的字符串，都必须过 `esc()`。
+
+    自启项的名字、命令行、发行商、路径全都来自本机注册表和 exe 版本信息 ——
+    一条自启项的名字里带 `<img onerror=...>` 完全可能。这里做静态检查：
+    模板里每个 `${...}` 如果引用了这些字段，就必须包着 esc。
+    """
+
+    # 这些标识符代表「可能来自外部的字符串」
+    TAINTED = ("i.name", "i.command", "i.detail", "i.source", "i.company", "i.refuse",
+               "p.name", "p.path", "DATA.problems")
+    # 这个局部变量是自己用 esc 拼出来的，见下面 test_flags_are_escaped_where_built
+    PRE_ESCAPED = ("flags",)
+
+    def _interpolations(self):
+        import re
+
+        return re.findall(r"\$\{([^{}]*)\}", web._PAGE)
+
+    def test_every_tainted_field_is_escaped(self):
+        import re
+
+        offenders = []
+        for expr in self._interpolations():
+            if expr.strip() in self.PRE_ESCAPED:
+                continue
+            if any(word in expr for word in self.TAINTED):
+                # 允许 esc(x) 或 esc(x)||"..." 这类，核心是必须有 esc(
+                if not re.search(r"\besc\(", expr):
+                    offenders.append(expr)
+        self.assertEqual(offenders, [], f"这些插值没过 esc()：{offenders}")
+
+    def test_flags_are_escaped_where_built(self):
+        # `${flags}` 本身不再转义，所以拼接它的那一处必须转义
+        import re
+
+        block = web._PAGE[web._PAGE.index("const flags=") :]
+        block = block[: block.index(".join(")]
+        self.assertIn("esc(f)", block)
+
+    def test_esc_itself_neutralises_a_payload(self):
+        # esc 的实现也一起钉住：五个字符都要转
+        import re
+
+        match = re.search(r"const esc=(.*?);\n", web._PAGE)
+        self.assertIsNotNone(match)
+        body = match.group(1)
+        for ch in ("&", "<", ">", '"', "'"):
+            with self.subTest(char=ch):
+                self.assertIn(ch, body)
+
+    def test_no_inline_onclick_with_data(self):
+        # 把 key 拼进 onclick 属性里是上一版的写法，改成 data-* + 事件委托了
+        self.assertNotIn('onclick="toggle(', web._PAGE)
+
+
 class TestBindAddress(unittest.TestCase):
     def test_only_loopback(self):
         server = web.make_server(0)

@@ -166,6 +166,41 @@ class TestHiddenArgs(unittest.TestCase):
     def test_empty(self):
         self.assertFalse(safety.hidden_args(""))
 
+    # ---- 误报：以前是在整条命令行里找子串，路径和长得像的开关都会中招
+    def test_directory_named_like_a_flag_is_not_a_flag(self):
+        self.assertFalse(safety.hidden_args("C:\\tools\\--silent\\x.exe"))
+
+    def test_background_color_is_not_hidden(self):
+        self.assertFalse(safety.hidden_args("app.exe --background-color=red"))
+
+    def test_backgroundtask_is_not_hidden(self):
+        self.assertFalse(safety.hidden_args("app.exe /backgroundtask"))
+
+    def test_path_containing_background_is_not_a_flag(self):
+        self.assertFalse(safety.hidden_args("C:\\Program Files\\Background\\app.exe"))
+
+    # ---- 漏报：同样因为只认固定几个整词
+    def test_silent_start_counts(self):
+        self.assertTrue(safety.hidden_args('"C:\\a\\clash.exe" --silent-start'))
+
+    def test_minimized_counts(self):
+        self.assertTrue(safety.hidden_args("app.exe -minimized"))
+
+    def test_min_counts(self):
+        self.assertTrue(safety.hidden_args("app.exe /min"))
+
+    def test_hidden_flag_counts(self):
+        self.assertTrue(safety.hidden_args("app.exe --hidden"))
+
+    def test_whole_line_quoted_with_flag(self):
+        self.assertTrue(safety.hidden_args('"C:\\Program Files\\App\\x.exe --silent"'))
+
+    def test_flag_value_form(self):
+        self.assertTrue(safety.hidden_args("app.exe --silent=true"))
+
+    def test_unquoted_path_with_spaces_then_flag(self):
+        self.assertTrue(safety.hidden_args("C:\\Program Files\\V\\x.exe --silent"))
+
 
 class TestRefuseReason(unittest.TestCase):
     def test_runonce_refused(self):

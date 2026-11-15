@@ -70,9 +70,22 @@ class TestBuild(Base):
         self.assertEqual(rep.avail_ram, 6 << 30)
 
     def test_non_admin_adds_a_note(self):
-        rep = self.build([], [])
+        # 只有真的读不到进程时才提示 —— 一个都读不到（或没有进程）时说
+        # 「不是管理员：0 个进程读不到」纯属噪音，用户会以为自己漏看了什么
+        rep = self.build([], [proc(1, "a.exe", 10, readable=False)])
         lines = "\n".join(report.render(rep))
         self.assertIn("不是管理员", lines)
+        self.assertIn("1 个进程读不到", lines)
+
+    def test_no_note_when_nothing_is_unreadable(self):
+        rep = self.build([], [])
+        lines = "\n".join(report.render(rep))
+        self.assertNotIn("不是管理员", lines)
+
+    def test_admin_never_gets_the_note(self):
+        with mock.patch.object(winapi, "is_admin", lambda: True):
+            rep = self.build([], [proc(1, "a.exe", 10, readable=False)])
+        self.assertNotIn("不是管理员", "\n".join(report.render(rep)))
 
     def test_coverage_problem_is_surfaced(self):
         with mock.patch.object(winapi, "COVERAGE", {"mode": "partial", "reason": "自检没过"}):
