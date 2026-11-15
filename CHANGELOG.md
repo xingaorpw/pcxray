@@ -25,6 +25,14 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **页面读的字段和服务端给的字段，现在逐个对账。** 上一类问题的通解：把页面
+  脚本里的 `DATA.x.y`、`i.xxx`、`p.xxx` 全部抠出来，逐个到真实 `list --json`
+  的结果里找。反证过两次：服务端把 `ram` 的键改名 → 「服务端没有：
+  ram.physical_total_mb」；把 `process_count` 改名 → 「服务端没有：
+  process_count」；把条目字段 `running_mb` 改名 → 「条目里没有：running_mb」。
+  写这条检查时又差点写成永远绿的：第一版「父对象在就算过」，于是 `ram` 键
+  改名照样通过 —— 现在只对白名单里的方法名（`slice`/`join`/`length`…）允许
+  退到上一层。
 - **网页的「物理内存 / 已用」两个数字从来没被验证过，夹具还停在旧键名上。**
   `list --json` 的 `ram` 从 `total`/`available` 改名成
   `physical_total_mb`/`physical_available_mb` 之后，`ci_checks` 里那份假数据

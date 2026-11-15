@@ -869,6 +869,96 @@ def check_no_syntax_warnings() -> None:
     check("没有 SyntaxWarning", not bad, "；".join(bad[:3]))
 
 
+def check_page_reads_only_real_fields() -> None:
+    """页面读的每个字段，服务端必须真的给 —— 一个字段一个字段对。
+
+    这是上一类 bug 的通解：`list --json` 的 `ram` 改了键名，页面还读老名字，
+    读到 undefined 就安静地显示「未知」，不报错、不空白、测试全绿。靠人记得
+    同步是靠不住的，这里直接从页面源码里把 `DATA.x.y` 抠出来，逐个到真实
+    扫描结果里找。
+    """
+    import json
+    import re as _re
+    import subprocess
+    import sys
+
+    from pcxray import web
+
+    match = _re.search(r"<script>(.*?)</script>", web._PAGE.replace("__TOKEN__", "t"), _re.S)
+    if not match:
+        check("页面里有脚本", False, "没找到 <script>")
+        return
+    js = match.group(1)
+    done = subprocess.run(
+        [sys.executable, "-m", "pcxray", "list", "--json", "--limit", "0"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    if done.returncode != 0:
+        check("字段契约检查能跑", False, done.stderr[-160:])
+        return
+    payload = json.loads(done.stdout)
+
+    def walk(obj, path: str):
+        node = obj
+        for part in path.split("."):
+            if not isinstance(node, dict) or part not in node:
+                return None, False
+            node = node[part]
+        return node, True
+
+    # 尾段可能是个方法/属性（`background.slice`、`problems.length`）。只有**明确
+    # 认识**的这些才允许退到上一层 —— 否则「父对象在」就算过，等于这条检查永远
+    # 绿（试过：把服务端的 ram 键改名，它照样说没问题）。
+    methods = {
+        "slice", "join", "length", "map", "filter", "forEach", "find", "some",
+        "every", "indexOf", "toString", "toFixed", "includes", "split", "trim",
+        "toLowerCase", "concat", "reverse", "sort", "push", "keys", "values",
+    }
+    missing: list[str] = []
+    for path in sorted(set(_re.findall(r"DATA\.([A-Za-z_][A-Za-z0-9_.]*)", js))):
+        if walk(payload, path)[1]:
+            continue
+        parts = path.split(".")
+        if parts[-1] in methods and len(parts) > 1 and walk(payload, ".".join(parts[:-1]))[1]:
+            continue
+        missing.append(path)
+    check(
+        "页面读的 DATA 字段服务端都给",
+        not missing,
+        "服务端没有：" + "、".join(missing[:5]) if missing else "",
+    )
+
+    # 条目字段：页面用 `i.xxx`，服务端每条自启项必须真有这些键
+    items = payload.get("autostart", {}).get("items") or []
+    if items:
+        item_keys = set(items[0])
+        wanted = set(_re.findall(r"\bi\.([A-Za-z_][A-Za-z0-9_]*)", js))
+        gone = sorted(wanted - item_keys)
+        check(
+            "页面读的条目字段服务端都给",
+            not gone,
+            "条目里没有：" + "、".join(gone[:5]) if gone else "",
+        )
+    else:
+        print("  · 跳过条目字段检查（这台机器没扫到自启项）")
+
+    # 后台程序字段：页面用 `p.xxx`
+    background = payload.get("background") or []
+    if background:
+        bg_keys = set(background[0])
+        wanted = set(_re.findall(r"\bp\.([A-Za-z_][A-Za-z0-9_]*)", js))
+        gone = sorted(wanted - bg_keys)
+        check(
+            "页面读的后台字段服务端都给",
+            not gone,
+            "后台数据里没有：" + "、".join(gone[:5]) if gone else "",
+        )
+    else:
+        print("  · 跳过后台字段检查（这台机器没有后台程序）")
+
+
 def main() -> int:
     print("端到端自检")
     check_bad_arguments()
@@ -885,6 +975,7 @@ def main() -> int:
     check_json_timestamps()
     check_move_mode_round_trip()
     check_no_syntax_warnings()
+    check_page_reads_only_real_fields()
     check_readme_test_count()
     check_python39_syntax()
     print()
