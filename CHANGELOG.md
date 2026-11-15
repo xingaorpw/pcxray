@@ -25,6 +25,15 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **计划任务这条关闭路径，从「手工跑过一次」变成「每次自检都跑」。**
+  以前 README 里那句「本机端到端实测」靠的是一次手工验证 —— 手工验证不会
+  在下次改动时报警。现在 `ci_checks.py` 每次建一条登录触发的探针任务，
+  `off` 之后用 `Get-ScheduledTask` 确认状态真的是 `Disabled`，`restore` 之后
+  确认回到 `Ready`，最后删掉探针并再确认一次它没了。判断依据是 Windows 自己
+  的状态，不是命令自己说成功。反证过：让 `off` 假装成功（跳过真正的
+  PowerShell 调用）→ `✗ off 之后 Windows 说它是 Disabled　Windows 说它是 Ready`。
+  顺带确认了一件事：**用户自己范围内的计划任务，不提升权限也能改** ——
+  所以这条路是真正端到端验过的，服务那条才只能验到「干净拒绝」。
 - **「关掉 → 反悔 → 还原」这条主路径，以前没在真机器上端到端跑过。**
   各分支都测过（备份里存了什么、还原时怎么读），但没有一次「跑完命令之后
   开关真的回到原样」。现在两种起点都跑真的：这条从来没有过标记 → `off`

@@ -863,6 +863,98 @@ def check_move_mode_round_trip() -> None:
                 pass
 
 
+def check_task_off_restore_round_trip() -> None:
+    r"""计划任务这条关闭路径，端到端跑一遍 —— 状态由 Windows 自己判定。
+
+    服务那条非管理员改不了（只验到「干净拒绝」），计划任务不一样：**用户自己
+    范围内**的任务，不提升权限就能建、能关。所以这里真的建一个登录触发的探针
+    任务，然后 `off` → 用 `Get-ScheduledTask` 看它是不是真的 Disabled，
+    `restore` → 看它是不是真的回到 Ready。
+
+    这是「任务关闭路径」唯一的硬证据：命令说自己成功不算，得 Windows 也这么说。
+
+    全程用临时 HOME；探针任务在 finally 里删掉，删完再确认一次它真的没了。
+    """
+    import tempfile
+
+    from pcxray import pwsh, winapi
+
+    if not winapi.IS_WINDOWS:
+        print("  · 跳过计划任务往返（不是 Windows）")
+        return
+
+    name = "pcxray_selftest_task"
+    state_script = f"(Get-ScheduledTask -TaskName '{name}').State"
+    delete_script = f"Unregister-ScheduledTask -TaskName '{name}' -Confirm:$false"
+    create_script = (
+        '$p = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\\$env:USERNAME" -LogonType Interactive; '
+        '$t = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\\$env:USERNAME"; '
+        "$a = New-ScheduledTaskAction -Execute 'C:\\Windows\\System32\\cmd.exe' -Argument '/c exit'; "
+        f"Register-ScheduledTask -TaskName '{name}' -Trigger $t -Action $a -Principal $p -Force | Out-Null; "
+        f"(Get-ScheduledTask -TaskName '{name}').State"
+    )
+
+    def state() -> str:
+        ok, out, _err = pwsh.run_text(state_script, timeout=60)
+        return out.strip() if ok else ""
+
+    def run_cli(args, home):
+        env = dict(os.environ)
+        env["USERPROFILE"] = home
+        env["HOME"] = home
+        env["PYTHONIOENCODING"] = "utf-8"
+        done = subprocess.run(
+            [sys.executable, "-m", "pcxray"] + list(args),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            env=env,
+            timeout=300,
+        )
+        return done.returncode, done.stdout + done.stderr
+
+    ok, out, err = pwsh.run_text(create_script, timeout=120)
+    if not ok or out.strip() != "Ready":
+        print(f"  · 跳过计划任务往返（建不了探针任务：{out.strip()[:40] or err.strip()[:60]}）")
+        return
+    try:
+        check("探针任务建好了，Windows 说它是 Ready", state() == "Ready", state())
+        with tempfile.TemporaryDirectory() as home:
+            # 先确认 pcxray 看得见它 —— 看不见就谈不上关
+            code, out = run_cli(["list", "--json", "--limit", "0", "--kind", "task"], home)
+            seen = name in out
+            check("pcxray 扫得到这个探针任务", seen, "" if seen else "list --json 里没有它")
+            code, out = run_cli(["off", name], home)
+            check("off 计划任务：命令成功", code == 0, out.strip()[-140:] if code else "")
+            now = state()
+            check(
+                "off 之后 Windows 说它是 Disabled",
+                now == "Disabled",
+                "" if now == "Disabled" else f"Windows 说它是 {now or '(查不到)'}",
+            )
+            backups = os.path.join(home, ".pcxray", "backup")
+            made = sorted(os.listdir(backups)) if os.path.isdir(backups) else []
+            check("off 计划任务：留下了一份备份", len(made) == 1, f"备份目录里有 {made}")
+            if len(made) == 1:
+                backup = os.path.join(backups, made[0])
+                code, out = run_cli(["restore", backup], home)
+                check("restore 计划任务：命令成功", code == 0, out.strip()[-140:] if code else "")
+                back = state()
+                check(
+                    "restore 之后 Windows 说它回到了 Ready",
+                    back == "Ready",
+                    "" if back == "Ready" else f"Windows 说它是 {back or '(查不到)'}",
+                )
+    finally:
+        pwsh.run_text(delete_script, timeout=60)
+        left = state()
+        check(
+            "探针任务已经删掉",
+            left == "",
+            "" if left == "" else f"还留着，状态 {left}",
+        )
+
+
 def check_flag_mode_off_restore_round_trip() -> None:
     r"""默认模式（写 StartupApproved 标记）的「关掉 → 反悔 → 还原」端到端跑一遍。
 
@@ -1716,6 +1808,7 @@ def main() -> int:
     check_json_timestamps()
     check_move_mode_round_trip()
     check_flag_mode_off_restore_round_trip()
+    check_task_off_restore_round_trip()
     check_no_syntax_warnings()
     check_page_reads_only_real_fields()
     check_autostart_memory_is_deduped()
