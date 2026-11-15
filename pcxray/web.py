@@ -261,6 +261,11 @@ class Handler(BaseHTTPRequestHandler):
             "connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'",
         )
         self.send_header("Cache-Control", "no-store")
+        # 请求体没读完就别让客户端复用这条连接 —— 剩下的字节会被当成下一个
+        # 请求的开头（实测会解析出 `{"keys":["a"]}GET` 这种鬼东西）。
+        if getattr(self, "_body_unread", False):
+            self.close_connection = True
+            self.send_header("Connection", "close")
         self.end_headers()
         self.wfile.write(body)
 
@@ -288,12 +293,24 @@ class Handler(BaseHTTPRequestHandler):
         return True, ""
 
     def _read_body(self) -> dict:
+        """读请求体。读不完的时候会把 `_body_unread` 标上，回话后必须断开。
+
+        没读掉的请求体还留在流里，HTTP/1.1 会把它当成下一个请求的开头 ——
+        实测：发一个 `Content-Length: 999999` 的 POST，服务端拒了但没读，
+        紧接着同一条连接上的 GET 被解析成 `{"keys":["a"]}GET`，回 501。
+        宁可断开，也不要让下一条请求被上一具尸体污染。
+        """
         try:
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError:
+            self._body_unread = True
             return {}
-        if length <= 0 or length > 65536:
+        if length <= 0:
             return {}
+        if length > 65536:
+            self._body_unread = True
+            return {}
+        self._body_unread = False
         raw = self.rfile.read(length)
         try:
             data = json.loads(raw.decode("utf-8"))
@@ -327,6 +344,8 @@ class Handler(BaseHTTPRequestHandler):
         self._json(404, {"ok": False, "error": "没有这个地址"})
 
     def do_POST(self) -> None:  # noqa: N802
+        # 先假设请求体没读：404 / 403 这些提前返回的分支都不读体，回完必须断开
+        self._body_unread = True
         parsed = urlparse(self.path)
         if parsed.path not in ("/api/off", "/api/on"):
             self._json(404, {"ok": False, "error": "没有这个地址"})

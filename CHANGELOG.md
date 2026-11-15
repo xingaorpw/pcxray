@@ -25,6 +25,15 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **没读完的请求体会污染同一条连接上的下一条请求。** `_read_body()` 在长度
+  超过 64KB 时直接放弃，403 / 404 这些分支更是一眼都不看体。HTTP/1.1 会把
+  留在流里的字节当成下一个请求的开头 —— 实测：发一个
+  `Content-Length: 999999` 的 POST，紧接着同一条连接上的 GET 被解析成
+  `{"keys":["a"]}GET`，服务端回 `501 Unsupported method`。现在只要这次回话
+  之前没把体读掉，就带 `Connection: close` 并关掉连接（读完了照旧 keep-alive，
+  实测下一条 GET 还是 200）。三条测试：超大体重必须断开、管道化进来的下一条
+  请求绝不能被拼成垃圾、正常 POST 之后连接还能用。反证过：去掉断开逻辑，
+  前两条立刻红，第二条报 `b'501' unexpectedly found`。
 - **连上不说话的连接会永远占着一条线程。** `BaseHTTPRequestHandler.timeout`
   默认是 None —— 也就是永远等下去。实测：开 10 个空连接，8 秒后**一个都没**
   被服务端关掉。浏览器关标签页、进程被强杀都会留下这种半死的连接，每一条

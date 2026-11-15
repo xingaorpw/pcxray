@@ -204,6 +204,83 @@ class ServerCase(unittest.TestCase):
             return exc.code, json.loads(exc.read().decode("utf-8"))
 
 
+class TestUnreadBodyDoesNotPoisonTheConnection(ServerCase):
+    """没读完的请求体不许污染同一条连接上的下一条请求。
+
+    `_read_body()` 在长度超过 64KB 时直接放弃，403 / 404 这些分支更是一眼都
+    不看体。HTTP/1.1 会把留在流里的那些字节当成下一个请求的开头 —— 实测：
+    发一个 `Content-Length: 999999` 的 POST，紧接着同一条连接上的 GET 被
+    解析成 `{"keys":["a"]}GET`，服务端回 `501 Unsupported method`。
+    """
+
+    def _open(self):
+        sock = socket.create_connection(("127.0.0.1", self.port), timeout=20)
+        self.addCleanup(sock.close)
+        return sock
+
+    def _head(self, length, token=True):
+        lines = [
+            "POST /api/off HTTP/1.1",
+            f"Host: 127.0.0.1:{self.port}",
+            "Content-Type: application/json",
+            f"Origin: http://127.0.0.1:{self.port}",
+            f"Content-Length: {length}",
+        ]
+        if token:
+            lines.append(f"X-PCXRAY-Token: {self.server.token}")
+        return ("\r\n".join(lines) + "\r\n\r\n").encode()
+
+    def _read_all(self, sock, seconds=3.0):
+        """把这条连接上的东西读干净（直到对方关闭或超时）。"""
+        sock.settimeout(0.3)
+        deadline = time.time() + seconds
+        seen = b""
+        while time.time() < deadline:
+            try:
+                chunk = sock.recv(65535)
+            except socket.timeout:
+                continue
+            except OSError:  # 被 RST 也算关掉了
+                break
+            if not chunk:
+                break
+            seen += chunk
+        return seen
+
+    def test_oversized_body_closes_the_connection(self):
+        sock = self._open()
+        sock.sendall(self._head(999999) + b'{"keys":["a"]}')
+        seen = self._read_all(sock)
+        self.assertTrue(seen.startswith(b"HTTP/1.1 4"), seen[:80])
+        self.assertIn(b"Connection: close", seen, "没读掉请求体就该断开，否则下一条请求被污染")
+        # 关掉之后不该再有第二个响应冒出来
+        self.assertEqual(seen.count(b"HTTP/1.1 "), 1, f"冒出了不止一个响应：{seen[:200]!r}")
+
+    def test_pipelined_request_after_oversized_body_is_never_parsed(self):
+        sock = self._open()
+        # 把下一条请求和超大体一起塞进去 —— 服务端不能把它当成请求行
+        sock.sendall(
+            self._head(999999)
+            + b'{"keys":["a"]}'
+            + b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"
+        )
+        seen = self._read_all(sock)
+        self.assertNotIn(b"501", seen, f"请求行被拼成了垃圾：{seen[:120]!r}")
+        self.assertNotIn(b'{"keys":["a"]}GET', seen)
+
+    def test_normal_post_keeps_the_connection_alive(self):
+        # 读完了体就不该断开 —— 浏览器一条连接要发很多请求，每次都断会很慢
+        body = b'{"keys":["a"]}'
+        sock = self._open()
+        sock.sendall(self._head(len(body)) + body)  # 长度必须精确，多一个字节就会去等
+        first = self._read_all(sock, seconds=1.5)
+        self.assertTrue(first.startswith(b"HTTP/1.1"), first[:80])
+        self.assertNotIn(b"Connection: close", first, "体读完了不该断连接")
+        sock.sendall(f"GET / HTTP/1.1\r\nHost: 127.0.0.1:{self.port}\r\n\r\n".encode())
+        second = self._read_all(sock, seconds=3.0)
+        self.assertTrue(second.startswith(b"HTTP/1.1 200"), f"同一条连接上的下一条请求：{second[:120]!r}")
+
+
 class TestIdleConnectionsDoNotPileUp(ServerCase):
     """连上不说话的客户端不能永远占着一条线程。
 
