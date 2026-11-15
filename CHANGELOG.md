@@ -25,6 +25,15 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **「Python 3.9 起」这条也一直没人验。** `ast.parse(feature_version=(3,9))`
+  只能抓语法（比如 `match`），抓不到「语法没问题但这个函数 3.10 才有」——
+  本机只有 3.13，跑测试永远绿。现在 ci_checks 会扫一批 3.10+ 才有的东西：
+  `zip(strict=)`、`itertools.pairwise`、`int.bit_count()`、`datetime.UTC`、
+  `tomllib`、`typing.Self`、`ExceptionGroup`、`asyncio.timeout`、
+  `dataclasses(kw_only=)`、`isinstance(..., A | B)`。反证过：塞一句
+  `import tomllib` → 「tomllib @ pcxray/text.py:11」；塞一句
+  `zip(a, b, strict=True)` → 「zip(strict=) @ pcxray/text.py:13」。
+  当前代码一处都没用到。
 - **没读完的请求体会污染同一条连接上的下一条请求。** `_read_body()` 在长度
   超过 64KB 时直接放弃，403 / 404 这些分支更是一眼都不看体。HTTP/1.1 会把
   留在流里的字节当成下一个请求的开头 —— 实测：发一个

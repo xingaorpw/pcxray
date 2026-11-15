@@ -1254,6 +1254,38 @@ def check_no_third_party_imports() -> None:
     )
 
 
+def check_no_newer_stdlib_apis() -> None:
+    """不许用 Python 3.10+ 才有的库函数 —— 徽章写着 3.9 起。
+
+    `ast.parse(feature_version=(3,9))` 只能抓语法（比如 `match`），抓不到
+    「语法没问题但这个函数 3.10 才有」。本机只有 3.13，跑测试永远是绿的。
+    """
+    newer = {
+        "zip(strict=)": r"zip\([^)]*strict\s*=",
+        "itertools.pairwise": r"\bitertools\.pairwise\b",
+        "int.bit_count()": r"\.bit_count\(",
+        "datetime.UTC": r"\bdatetime\.UTC\b",
+        "tomllib": r"\btomllib\b",
+        "typing.Self": r"\btyping\.Self\b",
+        "ExceptionGroup": r"\bExceptionGroup\b",
+        "asyncio.timeout": r"\basyncio\.timeout\b",
+        "dataclasses kw_only": r"kw_only\s*=",
+        "isinstance 用 |": r"isinstance\([^)]*\|",
+    }
+    found: list[str] = []
+    for path in sorted(glob.glob("pcxray/*.py")):
+        text = open(path, encoding="utf-8").read()
+        for label, pattern in newer.items():
+            for match in re.finditer(pattern, text):
+                line = text[: match.start()].count("\n") + 1
+                found.append(f"{label} @ {path}:{line}")
+    check(
+        "没用到 3.10+ 才有的函数",
+        not found,
+        "" if not found else "、".join(found[:4]),
+    )
+
+
 def main() -> int:
     print("端到端自检")
     # 先记下这台机器现在的样子，最后再比一遍
@@ -1283,6 +1315,7 @@ def main() -> int:
     check_readme_options_exist()
     check_no_third_party_imports()
     check_python39_syntax()
+    check_no_newer_stdlib_apis()
     # 自检自己在真机器上写注册表（建探针、挪走、再删掉）。跑完必须和跑之前
     # 一模一样 —— 否则「自检」本身就成了污染源（真发生过：dry_run 被短路时
     # 探针留在 Run-pcxray-disabled 里，后面每一轮对账都多一条）。
