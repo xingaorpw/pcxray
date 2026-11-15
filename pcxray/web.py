@@ -5,11 +5,19 @@
 为什么要有网页：自启列表一百多条，终端里翻着看不方便；网页上能一眼扫完、能
 按条件筛、能勾选着关。但**改动仍然要一次一次确认** —— 没有「全选然后一键关掉」
 这种按钮，那是在鼓励用户把系统搞坏。
+
+**为什么要一个 token。** 只绑 127.0.0.1 不等于安全：你随便打开一个网页，那个
+网页就能往 `http://127.0.0.1:<端口>/api/off` 发请求。自启项的 key 是
+`sha1(种类|范围|名字)[:12]`，算法公开，攻击者算出 `run|user|OneDrive` 就能点名
+关掉它。所以：起服务时生成一个随机 token，写进页面，POST 必须带
+`X-PCXRAY-Token`。跨源请求读不到页面里的 token，也带不上自定义头（会被 CORS
+预检挡掉）。
 """
 
 from __future__ import annotations
 
 import json
+import secrets
 import threading
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -108,6 +116,9 @@ margin-bottom:14px;white-space:pre-wrap;font-size:13px}
 <footer id="foot"></footer>
 <script>
 let DATA=null, kind="", q="";
+// 服务端起服务时随机生成，写进这个页面。没有它改不了任何东西 ——
+// 别的网页读不到它，所以也没法冒名替你关自启项。
+const TOKEN="__TOKEN__";
 const QUICK=["run","run32","runonce","folder"];
 const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const mb=v=>v>=1024?(v/1024).toFixed(1)+" GB":(v>=1?v.toFixed(0)+" MB":(v*1024).toFixed(0)+" KB");
@@ -137,8 +148,9 @@ function draw(){
       const cls=f.includes("不存在")||f.includes("可疑")?"bad":(f.includes("不显示")?"warn":"");
       return `<span class="tag ${cls}">${esc(f)}</span>`;
     }).join("");
+    // 用 data-* 而不是把 key 拼进 onclick：少一层转义风险，也让 CSP 更干净
     const btn=i.can_disable
-      ? `<button onclick="toggle('${i.key}',${i.enabled},${i.needs_force?1:0})">`
+      ? `<button data-key="${esc(i.key)}" data-on="${i.enabled?1:0}" data-nf="${i.needs_force?1:0}">`
         +`${i.enabled?(i.needs_force?"改成手动":"关掉"):"恢复"}</button>`
       : `<span class="tag bad" title="${esc(i.refuse)}">不能关</span>`;
     return `<tr>
@@ -154,6 +166,9 @@ function draw(){
   document.getElementById("table").innerHTML=
     `<table><thead><tr><th>状态</th><th>名称 / 命令行</th><th>来源</th>
      <th>发行商</th><th>现在占</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table>`;
+  document.querySelectorAll("#table button[data-key]").forEach(b=>{
+    b.onclick=()=>toggle(b.dataset.key, b.dataset.on==="1", b.dataset.nf==="1");
+  });
   const bg=DATA.background.slice(0,10).map(p=>
     `<tr><td>${esc(p.name)}</td><td>${mb(p.mb)}</td>
      <td class="mono">${esc(p.path||"读不到路径")}</td></tr>`).join("");
@@ -173,7 +188,8 @@ async function toggle(key,enabled,needsForce){
   const url=enabled?"/api/off":"/api/on";
   say("正在处理…");
   try{
-    const r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},
+    const r=await fetch(url,{method:"POST",
+      headers:{"Content-Type":"application/json","X-PCXRAY-Token":TOKEN},
       body:JSON.stringify({keys:[key],force:!!needsForce})});
     const j=await r.json();
     say((j.results||[]).map(x=>(x.ok?"✓ ":"✗ ")+x.name+"　"+x.message).join("\\n")
@@ -211,12 +227,41 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         # 本地页面，禁止任何外部来源嵌入或嗅探
         self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "no-referrer")
+        # 页面里只有内联样式和一段内联脚本，别的一律不许加载 —— 万一哪天
+        # 有条自启项的名字带了奇怪的 HTML，也不会变成向外的请求
+        self.send_header(
+            "Content-Security-Policy",
+            "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; "
+            "connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'",
+        )
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
 
     def _json(self, code: int, payload: dict) -> None:
         self._send(code, json.dumps(payload, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
+
+    def _authorised(self) -> tuple[bool, str]:
+        """这个 POST 是不是从我们自己的页面发出来的。
+
+        两道门：随机 token（跨源读不到）+ Origin 同源检查（挡掉被别的页面
+        冒名顶替的情况）。任何一道不过就拒绝。
+        """
+        expected = getattr(self.server, "token", "")
+        got = self.headers.get("X-PCXRAY-Token") or ""
+        if not expected or not secrets.compare_digest(got, expected):
+            return False, "缺少或错误的访问令牌，请从 pcxray 打开的页面里操作"
+        origin = self.headers.get("Origin")
+        if origin:
+            host = self.headers.get("Host") or ""
+            if origin != f"http://{host}":
+                return False, "来源不被信任"
+        ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        if ctype != "application/json":
+            return False, "请求必须是 application/json"
+        return True, ""
 
     def _read_body(self) -> dict:
         try:
@@ -235,11 +280,16 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802 - 标准库约定的方法名
         parsed = urlparse(self.path)
         if parsed.path == "/":
-            page = _PAGE.replace("__VERSION__", __version__)
+            page = (
+                _PAGE.replace("__VERSION__", __version__)
+                .replace("__TOKEN__", getattr(self.server, "token", ""))
+            )
             self._send(200, page.encode("utf-8"), "text/html; charset=utf-8")
             return
         if parsed.path == "/api/report":
-            force = "refresh=1" in (parsed.query or "")
+            # 用 parse_qs 而不是字符串包含 —— "refresh=10" 里也有 "refresh=1"
+            query = parse_qs(parsed.query or "")
+            force = (query.get("refresh") or [""])[0] == "1"
             self._json(200, _snapshot(force=force).as_dict())
             return
         self._json(404, {"ok": False, "error": "没有这个地址"})
@@ -248,6 +298,10 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         if parsed.path not in ("/api/off", "/api/on"):
             self._json(404, {"ok": False, "error": "没有这个地址"})
+            return
+        allowed, why = self._authorised()
+        if not allowed:
+            self._json(403, {"ok": False, "error": why})
             return
         body = self._read_body()
         keys = body.get("keys") or []
@@ -284,8 +338,23 @@ class Handler(BaseHTTPRequestHandler):
     do_DELETE = do_PUT
 
 
-def make_server(port: int = 0) -> ThreadingHTTPServer:
-    return ThreadingHTTPServer(("127.0.0.1", port), Handler)
+class _Server(ThreadingHTTPServer):
+    """带一个随机 token 的服务器。
+
+    token 挂在服务器实例上而不是模块全局：起两个服务器（测试里会）各有各的
+    token，不会互相串。
+    """
+
+    daemon_threads = True
+    allow_reuse_address = True
+
+    def __init__(self, address, handler):
+        super().__init__(address, handler)
+        self.token = secrets.token_urlsafe(18)
+
+
+def make_server(port: int = 0) -> _Server:
+    return _Server(("127.0.0.1", port), Handler)
 
 
 def serve(port: int = 0, open_browser: bool = True) -> int:

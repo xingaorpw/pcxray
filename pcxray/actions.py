@@ -198,13 +198,19 @@ def _plan(entry, turn_on: bool, mode: str) -> dict | None:
             }
         approved = _approved_subkey(entry.kind)
         existed, old_value, old_kind = _read_value(hive, approved, value)
+        # 老值可能不是 bytes —— 本机 HKCU 里真有一条 REG_SZ 的 StartupApproved
+        # 值（GalaxyClient，空字符串）。只记 hex 会把它丢掉，还原时就变成
+        # 「删掉这条记录」，和「恢复成原来的空字符串」不是一回事。
+        old_hex = old_value.hex() if isinstance(old_value, (bytes, bytearray)) else None
+        old_str = old_value if isinstance(old_value, str) else None
         return {
             "kind": "flag",
             "hive": hive,
             "subkey": approved,
             "value_name": value,
             "existed": existed,
-            "old": old_value.hex() if isinstance(old_value, (bytes, bytearray)) else None,
+            "old": old_hex,
+            "old_str": old_str,
             "old_kind": old_kind,
             "new": (_ENABLED if turn_on else _disabled_now()).hex(),
             "name": entry.name,
@@ -225,6 +231,51 @@ def _plan(entry, turn_on: bool, mode: str) -> dict | None:
             "name": entry.name,
         }
     return None
+
+
+def _set_task(path: str, task: str, turn_on: bool) -> tuple[bool, str]:
+    """启 / 停计划任务，并读回状态确认。返回 (成功?, 给人看的话)。
+
+    `_apply` 和 `restore` 都走这里 —— 第一版两处各写了一遍，结果修了「关」
+    忘了修「还原」，还原时又报同一个假失败。同一条逻辑只能有一份。
+    """
+    from . import pwsh
+
+    verb = "Enable" if turn_on else "Disable"
+    want = "Ready" if turn_on else "Disabled"
+    path_q = pwsh.ps_quote(path)
+    task_q = pwsh.ps_quote(task)
+    script = (
+        f"{verb}-ScheduledTask -TaskPath {path_q} -TaskName {task_q} -ErrorAction Stop | Out-Null;"
+        f"(Get-ScheduledTask -TaskPath {path_q} -TaskName {task_q}).State"
+    )
+    ok, out, reason = pwsh.run_text(script, timeout=60)
+    if not ok:
+        return False, reason or "改计划任务失败"
+    # 改完立刻读回状态。计划任务的状态是权威的，不用等重启。
+    state = out.splitlines()[-1].strip() if out else ""
+    if state.lower() != want.lower():
+        return False, f"改完读回来的状态是「{state or '空'}」，不是「{want}」"
+    return True, f"已{'启用' if turn_on else '禁用'}计划任务（状态：{state}）"
+
+
+def _set_service(name: str, turn_on: bool) -> tuple[bool, str]:
+    """把服务改成自动 / 手动启动，并读回启动方式确认。"""
+    from . import pwsh
+
+    want = "Automatic" if turn_on else "Manual"
+    name_q = pwsh.ps_quote(name)
+    script = (
+        f"Set-Service -Name {name_q} -StartupType {want} -ErrorAction Stop;"
+        f"(Get-Service -Name {name_q}).StartType.ToString()"
+    )
+    ok, out, reason = pwsh.run_text(script, timeout=60)
+    if not ok:
+        return False, reason or f"改成 {want} 失败"
+    state = out.splitlines()[-1].strip() if out else ""
+    if state.lower() != want.lower():
+        return False, f"改完读回来的启动方式是「{state or '空'}」，不是「{want}」"
+    return True, f"已改成{'自动' if turn_on else '手动'}启动（服务不会立刻停止，重启后生效）"
 
 
 def _apply(plan: dict, turn_on: bool) -> Result:
@@ -248,11 +299,16 @@ def _apply(plan: dict, turn_on: bool) -> Result:
         hive, subkey = plan["hive"], plan["subkey"]
         try:
             if turn_on:
-                _delete_value(hive, subkey, plan["old_name"])
-                if plan["existed"]:
-                    _write_value(
-                        hive, subkey, plan["new_name"], plan["value"], plan["value_kind"] or None
+                if not plan["existed"]:
+                    # 源值不在，就没有东西可以改回去。报成功会让用户以为
+                    # 恢复了，其实什么都没发生。
+                    return Result(
+                        plan["name"], False, f"找不到 {plan['old_name']}，可能已经改回去了"
                     )
+                _delete_value(hive, subkey, plan["old_name"])
+                _write_value(
+                    hive, subkey, plan["new_name"], plan["value"], plan["value_kind"] or None
+                )
             else:
                 if not plan["existed"]:
                     return Result(plan["name"], False, "找不到这条注册表值，可能已经被删掉了")
@@ -264,37 +320,19 @@ def _apply(plan: dict, turn_on: bool) -> Result:
             return Result(plan["name"], False, "没有权限改这个键，需要管理员身份运行")
         except OSError as exc:
             return Result(plan["name"], False, f"改注册表失败：{exc}")
+        # 和 flag 一样，改完读回来确认
+        moved, _v, _k = _read_value(hive, subkey, plan["new_name"])
+        if not moved:
+            return Result(plan["name"], False, f"改名后找不到 {plan['new_name']}，已中止")
         return Result(plan["name"], True, f"已{'恢复' if turn_on else '改名'}为 {plan['new_name']}")
 
     if kind == "task":
-        from . import pwsh
-
-        verb = "Enable" if turn_on else "Disable"
-        script = (
-            f"{verb}-ScheduledTask -TaskPath '{plan['path']}' -TaskName '{plan['task']}' "
-            f"-ErrorAction Stop | Out-Null; 'ok'"
-        )
-        ok, _data, reason = pwsh.run_json(script, timeout=60)
-        if not ok:
-            return Result(plan["name"], False, reason or "改计划任务失败")
-        return Result(plan["name"], True, f"已{'启用' if turn_on else '禁用'}计划任务")
+        ok, message = _set_task(plan["path"], plan["task"], turn_on)
+        return Result(plan["name"], ok, message)
 
     if kind == "service":
-        from . import pwsh
-
-        target = "auto" if turn_on else "demand"
-        script = (
-            f"Set-Service -Name '{plan['service']}' -StartupType "
-            f"{'Automatic' if turn_on else 'Manual'} -ErrorAction Stop; 'ok'"
-        )
-        ok, _data, reason = pwsh.run_json(script, timeout=60)
-        if not ok:
-            return Result(plan["name"], False, reason or f"改成 {target} 失败")
-        return Result(
-            plan["name"],
-            True,
-            f"已改成{'自动' if turn_on else '手动启动'}（服务不会立刻停止，重启后生效）",
-        )
+        ok, message = _set_service(plan["service"], turn_on)
+        return Result(plan["name"], ok, message)
     return Result(plan.get("name", "?"), False, "不认识的条目类型")
 
 
@@ -305,9 +343,13 @@ def _run(items, turn_on: bool, force: bool, dry_run: bool, mode: str) -> tuple[l
     results: list[Result] = []
     plans: list[dict] = []
     skipped: list[Result] = []
+    seen: set[str] = set()
     admin = _is_admin()
 
     for entry in items:
+        if entry.key in seen:
+            continue  # 同一个名字传了两遍，不要重复改、也不要重复记备份
+        seen.add(entry.key)
         # 系统组件一律不动，--force 也不行。放行它等于给「关掉系统服务导致开不了机」
         # 开了个后门，而这个工具的目的不是让用户把电脑搞坏。
         if entry.protected:
@@ -402,9 +444,27 @@ def restore(path: str = "", dry_run: bool = False) -> tuple[list[Result], str]:
         try:
             if op["kind"] == "flag":
                 hive, subkey = op["hive"], op["subkey"]
-                if op.get("existed") and op.get("old"):
-                    _write_value(hive, subkey, op["value_name"], bytes.fromhex(op["old"]))
-                    results.append(Result(name, True, "已还原开关标记"))
+                old_hex = op.get("old")
+                old_str = op.get("old_str")
+                if not op.get("existed"):
+                    _delete_value(hive, subkey, op["value_name"])
+                    results.append(Result(name, True, "已删除开关标记（恢复成默认启用）"))
+                elif old_hex is not None:
+                    _write_value(hive, subkey, op["value_name"], bytes.fromhex(old_hex))
+                    # 还原也要读回来确认 —— 这是安全网，不能只喊一句「已还原」
+                    got_ok, got, _k = _read_value(hive, subkey, op["value_name"])
+                    if not got_ok or not isinstance(got, (bytes, bytearray)) or bytes(got).hex() != old_hex:
+                        results.append(Result(name, False, "还原后读回来的字节和备份不一致"))
+                    else:
+                        results.append(Result(name, True, "已还原开关标记"))
+                elif old_str is not None:
+                    # 原来是字符串类型的值（少见但真有），按原类型写回去
+                    _write_value(hive, subkey, op["value_name"], old_str, op.get("old_kind") or None)
+                    got_ok, got, _k = _read_value(hive, subkey, op["value_name"])
+                    if not got_ok or got != old_str:
+                        results.append(Result(name, False, "还原后读回来的值和备份不一致"))
+                    else:
+                        results.append(Result(name, True, "已还原开关标记（原值不是二进制）"))
                 else:
                     _delete_value(hive, subkey, op["value_name"])
                     results.append(Result(name, True, "已删除开关标记（恢复成默认启用）"))
@@ -417,27 +477,15 @@ def restore(path: str = "", dry_run: bool = False) -> tuple[list[Result], str]:
                     )
                 results.append(Result(name, True, "已改回原来的值名"))
             elif op["kind"] == "task":
-                from . import pwsh
-
                 if op.get("was_enabled"):
-                    script = (
-                        f"Enable-ScheduledTask -TaskPath '{op['path']}' "
-                        f"-TaskName '{op['task']}' -ErrorAction Stop | Out-Null; 'ok'"
-                    )
-                    ok, _d, reason = pwsh.run_json(script, timeout=60)
-                    results.append(Result(name, ok, reason or "已重新启用计划任务"))
+                    ok, message = _set_task(op.get("path", "\\"), op["task"], True)
+                    results.append(Result(name, ok, message))
                 else:
                     results.append(Result(name, True, "原本就是禁用状态，未改动"))
             elif op["kind"] == "service":
                 if op.get("was_enabled"):
-                    from . import pwsh
-
-                    script = (
-                        f"Set-Service -Name '{op['service']}' -StartupType Automatic "
-                        f"-ErrorAction Stop; 'ok'"
-                    )
-                    ok, _d, reason = pwsh.run_json(script, timeout=60)
-                    results.append(Result(name, ok, reason or "已恢复自动启动"))
+                    ok, message = _set_service(op["service"], True)
+                    results.append(Result(name, ok, message))
                 else:
                     results.append(Result(name, True, "原本就是手动启动，未改动"))
             else:

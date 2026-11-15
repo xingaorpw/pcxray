@@ -33,6 +33,7 @@ class Item:
         "refuse",
         "needs_force",
         "auto_started",
+        "shared",
     )
 
     def __init__(self, entry: autostart.Entry):
@@ -47,6 +48,11 @@ class Item:
         self.refuse = ""
         self.needs_force = False
         self.auto_started = False
+        # 有多少个条目同时认领了同一批进程。两个条目指向同一个 exe 时
+        # （本机就有两条 Edge 自启项），那 500 MB 会在两行里各出现一次。
+        # 头部合计按 PID 去重，所以「行的和」会比「合计」大 —— 必须让用户
+        # 看得见原因，否则会以为工具算错了。
+        self.shared = 1
 
     @property
     def name(self) -> str:
@@ -66,6 +72,8 @@ class Item:
             out.append("正在运行")
         if not self.company and self.exists:
             out.append("无发行商")
+        if self.shared > 1:
+            out.append(f"同一程序 {self.shared} 条")
         if self.needs_force and not self.refuse:
             out.append("需确认")
         return out
@@ -82,6 +90,7 @@ class Item:
                 "running": [{"pid": p.pid, "mb": round(p.mb, 1)} for p in self.runs],
                 "running_mb": round(self.run_mb, 1),
                 "auto_started": self.auto_started,
+                "shared": self.shared,
                 "can_disable": not self.refuse,
                 "needs_force": self.needs_force,
                 "refuse": self.refuse,
@@ -210,6 +219,15 @@ def build(
     report.groups = procs.group(process_list)
     report.background = procs.background_heavy(process_list)
     report.items = [_annotate(e, process_list, report.admin) for e in entries]
+    # 同一批进程可能被多个条目认领（两条 Edge 自启项都指向 msedge.exe）。
+    # 头部合计按 PID 去重，行里的数字是「这个程序一共占多少」，所以行的和
+    # 会比合计大。把这件事标在行上，用户才知道该信哪个数。
+    owners: dict[int, int] = {}
+    for item in report.items:
+        for proc in item.runs:
+            owners[proc.pid] = owners.get(proc.pid, 0) + 1
+    for item in report.items:
+        item.shared = max((owners[p.pid] for p in item.runs), default=1)
     auto_pids = procs.autostart_pids(process_list, report.logon)
     report.auto_count = len(auto_pids)
     report.auto_mb = sum(p.mb for p in process_list if p.pid in auto_pids)
@@ -282,11 +300,16 @@ def render(report: Report, limit: int = 0, only: str = "") -> list[str]:
     )
     auto_mb = report.autostart_memory()
     if auto_mb:
+        # 「行的和」会比这个数大：同一个程序被两条自启项指向时，两行都会显示
+        # 它的全部内存。所以这里说清楚这是去重后的合计。
         lines.append(
             f"  自启项现在占着 {text.mb(auto_mb)}"
-            f"（按进程去重；登录后 90 秒内起来的 {report.auto_count} 个进程共 "
-            f"{text.mb(report.auto_mb)}）"
+            f"（同一个进程只算一次；行里的数字是各自程序的全部内存）"
         )
+        if report.auto_count:
+            lines.append(
+                f"  登录后 90 秒内起来的 {report.auto_count} 个进程共 {text.mb(report.auto_mb)}"
+            )
     lines.append("")
 
     # ---- 自启表
@@ -312,6 +335,8 @@ def render(report: Report, limit: int = 0, only: str = "") -> list[str]:
                 mark.append("不显窗")
             if item.runs:
                 mark.append(f"占{text.mb(item.run_mb)}")
+            if item.shared > 1:
+                mark.append(f"×{item.shared}条")
             rows.append(
                 [
                     _state(item.entry),

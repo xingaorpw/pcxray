@@ -344,13 +344,19 @@ def _memory_by_pid() -> dict[int, tuple[int, int]]:
 
         out: dict[int, tuple[int, int]] = {}
         offset = 0
+        size = ctypes.sizeof(SYSTEM_PROCESS_INFORMATION)
         while True:
+            # 越界保护：真的出现半条记录时 `from_buffer` 会抛 ValueError，
+            # 把整个 `pcxray list` 炸掉。宁可少几条，不能崩。
+            if offset + size > length:
+                break
             info = SYSTEM_PROCESS_INFORMATION.from_buffer(buf, offset)
             pid = ctypes.cast(info.UniqueProcessId, ctypes.c_void_p).value or 0
             out[pid] = (int(info.WorkingSetSize), int(info.PrivatePageCount))
-            if not info.NextEntryOffset:
+            step = int(info.NextEntryOffset)
+            if not step:
                 break
-            offset += info.NextEntryOffset
+            offset += step
         return out
     return {}
 

@@ -13,9 +13,19 @@ import shutil
 import subprocess
 import sys
 
-__all__ = ["available", "run_json", "POWERSHELL_HINT"]
+__all__ = ["available", "run_json", "run_text", "ps_quote", "POWERSHELL_HINT"]
 
 POWERSHELL_HINT = "没找到 powershell.exe，这一部分数据读不到（不影响其它部分）"
+
+
+def ps_quote(value: str) -> str:
+    """把任意字符串变成安全的 PowerShell 单引号字面量。
+
+    PowerShell 里单引号字符串的转义是「写两遍」：`o'brien` → `'o''brien'`。
+    不转义的话，任务名里一个撇号就能让整段脚本语法错误 —— 而且报出来的是
+    「PowerShell 输出不是合法 JSON」这种跟真实原因毫无关系的话。
+    """
+    return "'" + str(value).replace("'", "''") + "'"
 
 
 def _exe() -> str | None:
@@ -42,14 +52,11 @@ _PREAMBLE = (
 )
 
 
-def run_json(script: str, timeout: float = 90.0) -> tuple[bool, object, str]:
-    """跑一段 PowerShell，把 stdout 当 JSON 解析。
-
-    返回 `(成功?, 数据, 失败原因)`。成功但没有输出时数据是 None。
-    """
+def _run(script: str, timeout: float) -> tuple[int, bytes, bytes, str]:
+    """跑一段 PowerShell。返回 (退出码, stdout, stderr, 失败原因)。"""
     exe = _exe()
     if not exe:
-        return False, None, POWERSHELL_HINT
+        return -1, b"", b"", POWERSHELL_HINT
     cmd = [exe, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", _PREAMBLE + script]
     try:
         done = subprocess.run(
@@ -59,16 +66,44 @@ def run_json(script: str, timeout: float = 90.0) -> tuple[bool, object, str]:
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except subprocess.TimeoutExpired:
-        return False, None, f"PowerShell 超过 {timeout:.0f} 秒没返回，已放弃这一部分"
+        return -1, b"", b"", f"PowerShell 超过 {timeout:.0f} 秒没返回，已放弃这一部分"
     except OSError as exc:
-        return False, None, f"启动 PowerShell 失败：{exc}"
+        return -1, b"", b"", f"启动 PowerShell 失败：{exc}"
+    return done.returncode, done.stdout, done.stderr, ""
 
-    raw = done.stdout
+
+def run_text(script: str, timeout: float = 60.0) -> tuple[bool, str, str]:
+    """跑一段 PowerShell，只按退出码判断成败，原样返回 stdout。
+
+    **改系统的动作用这个，不要用 `run_json`。** 第一版的 `off <计划任务>` 让
+    脚本输出 `'ok'` 再交给 `run_json` 解析 —— `ok` 不是 JSON，于是每次都返回
+    「PowerShell 输出不是合法 JSON：ok」。而任务其实已经被禁用了：**动作成功
+    却报失败**，用户会以为没生效然后反复重试。这个 bug 是真机跑出来才发现的。
+    """
+    code, out, err, reason = _run(script, timeout)
+    if reason:
+        return False, "", reason
+    text = _text(out).strip()
+    if code != 0:
+        lines = _text(err).strip().splitlines()
+        return False, text, (lines[-1] if lines else f"PowerShell 退出码 {code}")[:300]
+    return True, text, ""
+
+
+def run_json(script: str, timeout: float = 90.0) -> tuple[bool, object, str]:
+    """跑一段 PowerShell，把 stdout 当 JSON 解析。
+
+    返回 `(成功?, 数据, 失败原因)`。成功但没有输出时数据是 None。
+    """
+    code, out, err, reason = _run(script, timeout)
+    if reason:
+        return False, None, reason
+
+    raw = out
     if not raw.strip():
-        if done.returncode != 0:
-            err = _text(done.stderr).strip().splitlines()
-            reason = err[-1] if err else f"PowerShell 退出码 {done.returncode}"
-            return False, None, reason[:300]
+        if code != 0:
+            lines = _text(err).strip().splitlines()
+            return False, None, (lines[-1] if lines else f"PowerShell 退出码 {code}")[:300]
         return True, None, ""
     text = _text(raw).strip()
     try:

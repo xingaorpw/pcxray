@@ -10,7 +10,9 @@
 
 from __future__ import annotations
 
+import datetime
 import os
+import subprocess
 import sys
 import unittest
 
@@ -188,6 +190,156 @@ class TestRegistryRoundTrip(unittest.TestCase):
         self.assertIn("ops", payload)
         self.assertEqual(payload["ops"][0]["kind"], "flag")
         self.assertEqual(payload["ops"][0]["value_name"], TEST_NAME)
+
+    def test_string_typed_approved_value_is_restored_not_deleted(self):
+        """`StartupApproved` 里可能混着 REG_SZ 的值（本机真有一条）。
+
+        第一版只记了 bytes 的 hex，字符串老值在还原时会被「删掉」—— 看起来
+        成功了，其实丢了原来的数据。
+        """
+        import winreg
+
+        key = winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, APPROVED_KEY, 0, winreg.KEY_SET_VALUE)
+        try:
+            winreg.SetValueEx(key, TEST_NAME, 0, winreg.REG_SZ, "原来是字符串")
+        finally:
+            key.Close()
+
+        _results, backup = actions.disable([self._entry()])
+        self.assertEqual(self._read(APPROVED_KEY, TEST_NAME)[0], 0x03)
+
+        restored, _path = actions.restore(backup)
+        self.assertTrue(restored[0].ok, restored[0].message)
+        self.assertEqual(
+            self._read(APPROVED_KEY, TEST_NAME), "原来是字符串", "字符串老值没有还原回来"
+        )
+
+    def test_same_entry_twice_writes_one_backup_op(self):
+        import json
+
+        entry = self._entry()
+        _results, backup = actions.disable([entry, entry])
+        with open(backup, encoding="utf-8") as handle:
+            payload = json.load(handle)
+        self.assertEqual(len(payload["ops"]), 1)
+
+
+@unittest.skipUnless(WINDOWS, "只有 Windows 才有计划任务")
+class TestScheduledTaskRoundTrip(unittest.TestCase):
+    """真的建一条计划任务、真的关掉、用 schtasks 从外部确认状态。
+
+    这一块以前完全没有验证过 —— 结果 `off <计划任务>` 每次都在**动作成功之后
+    报失败**（脚本输出 `'ok'`，而 `run_json` 要求 JSON）。用户会以为没生效，
+    然后反复重试。真机跑一遍才暴露出来。
+    """
+
+    NAME = "pcxray_selftest_task"
+
+    def setUp(self):
+        if not self._schtasks_available():
+            self.skipTest("没有 schtasks")
+        self._delete()
+
+    def tearDown(self):
+        self._delete()
+
+    def _schtasks_available(self) -> bool:
+        try:
+            done = subprocess.run(
+                ["schtasks", "/Query", "/TN", "nonexistent_task_pcxray"],
+                capture_output=True,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except OSError:
+            return False
+        return done.returncode in (0, 1)
+
+    def _delete(self) -> None:
+        subprocess.run(
+            ["schtasks", "/Delete", "/TN", self.NAME, "/F"],
+            capture_output=True,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+
+    def _create(self, name: str = "") -> str:
+        name = name or self.NAME
+        when = (datetime.datetime.now() + datetime.timedelta(days=2)).strftime("%H:%M")
+        done = subprocess.run(
+            ["schtasks", "/Create", "/TN", name, "/TR", "notepad.exe /selftest",
+             "/SC", "ONCE", "/ST", when, "/F"],
+            capture_output=True,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if done.returncode != 0:
+            self.skipTest("建不了计划任务（可能需要管理员）：" + done.stderr.decode("mbcs", "replace")[:120])
+        return name
+
+    def _state(self, name: str = "") -> str:
+        # 不能用 `schtasks /FO LIST` 解析 —— 中文系统上那一行是「状态:」，
+        # 按 "status" 匹配会拿到空串（第一版就是这么挂的）。
+        # `Get-ScheduledTask` 的 State 是枚举名（Ready/Disabled），不受语言影响。
+        from pcxray import pwsh
+
+        ok, out, _reason = pwsh.run_text(
+            f"Get-ScheduledTask -TaskName {pwsh.ps_quote(name or self.NAME)} -ErrorAction Stop"
+            f" | Select-Object -ExpandProperty State",
+            timeout=30,
+        )
+        return out.splitlines()[-1].strip() if ok and out else ""
+
+    def _entry(self, name: str = ""):
+        name = name or self.NAME
+        return autostart.Entry(
+            name=name,
+            kind="task",
+            source="计划任务",
+            scope="user",
+            command="notepad.exe /selftest",
+            exe="notepad.exe",
+            enabled=True,
+            locator={"path": "\\", "name": name},
+        )
+
+    def test_disable_then_enable_is_reported_truthfully(self):
+        self._create()
+        self.assertEqual(self._state(), "Ready")
+
+        results, _backup = actions.disable([self._entry()])
+        self.assertTrue(results[0].ok, results[0].message)
+        self.assertEqual(self._state(), "Disabled", "报告成功但任务其实没被禁用")
+
+        results, _backup = actions.enable([self._entry()])
+        self.assertTrue(results[0].ok, results[0].message)
+        self.assertEqual(self._state(), "Ready", "报告成功但任务其实没被启用")
+
+    def test_restore_re_enables_the_task(self):
+        self._create()
+        _results, backup = actions.disable([self._entry()])
+        self.assertEqual(self._state(), "Disabled")
+
+        restored, _path = actions.restore(backup)
+        self.assertTrue(restored[0].ok, restored[0].message)
+        self.assertEqual(self._state(), "Ready", "还原报成功但任务还是禁用状态")
+
+    def test_apostrophe_in_task_name_does_not_break_the_script(self):
+        # 不转义的话 PowerShell 直接语法错误，而报出来的是「输出不是合法 JSON」
+        name = "pcxray_o'brien"
+        self._create(name)
+        try:
+            results, _backup = actions.disable([self._entry(name)])
+            self.assertTrue(results[0].ok, results[0].message)
+            self.assertEqual(self._state(name), "Disabled")
+        finally:
+            subprocess.run(
+                ["schtasks", "/Delete", "/TN", name, "/F"],
+                capture_output=True,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+
+    def test_missing_task_reports_failure_not_success(self):
+        results, _backup = actions.disable([self._entry("pcxray_no_such_task_xyz")])
+        self.assertFalse(results[0].ok)
+        self.assertNotIn("状态：Disabled", results[0].message)
 
 
 @unittest.skipUnless(WINDOWS, "只有 Windows 才有这些接口")
