@@ -25,6 +25,12 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **一条自启项都没有时，`list` 只打一个表头就没了。** 空机器（CI 的 runner
+  就是这样）上用户看到一片空白，分不清「真的没有自启项」和「程序没干活」。
+  现在会说「开机自启：没有条目」；`--kind service` 这类会指明是哪一类空；
+  有来源没读到时再加一句「（有来源没读到，见下方说明）」。反证过三条，都能红。
+- **`--limit` 之外还有一个「见上面的 problems」，但那些说明打在下面。**
+  输出里也没有叫 problems 的段落，用户抬头什么也找不到。改成「原因见下方」。
 - **刷新一下网页，终端就刷出一屏 Python traceback。** 浏览器刷新、关标签、
   取消 fetch 都会先掐断连接，`socketserver` 默认的 `handle_error` 会把整段
   `ConnectionResetError: [WinError 10054]` 打到终端上 —— 用户第一反应是

@@ -367,6 +367,13 @@ def render(report: Report, limit: int = 0, only: str = "") -> list[str]:
         # 截断了就必须说，否则用户看到 3 行会以为「这一类就 3 条」
         hidden_by_limit = len(shown) - limit
         shown = shown[:limit]
+    if not shown:
+        # 空机器（或者只扫了一类而那一类没东西）时，这里以前什么都不打印 ——
+        # 用户看到的是一片空白，分不清「真的没有」和「程序没干活」。
+        lines.append(f"  {_kind_label(only) if only else '开机自启'}：没有条目")
+        if report.problems:
+            lines.append("  （有来源没读到，见下方说明）")
+        lines.append("")
     if shown:
         rows = []
         for item in shown:
@@ -473,7 +480,9 @@ def render(report: Report, limit: int = 0, only: str = "") -> list[str]:
             "要完整信息用 pcxray list --elevate"
         )
     if report.memory_coverage != "all":
-        notes.append("内存数据只覆盖了一部分进程（见上面的 problems）")
+        # 以前写的是「见上面的 problems」—— 那些说明其实打在**下面**，
+        # 而且输出里没有叫 problems 的段落，用户抬头什么也找不到。
+        notes.append("内存数据只覆盖了一部分进程（原因见下方）")
     for problem in report.problems:
         # problems 里可能有 PowerShell 的原始报错（带 CRLF）和任务名/服务名。
         # 直接拼进提示行，`\x1b[2J` 就能清屏、`\r` 能把行冲掉 —— 这里也要过 safe。

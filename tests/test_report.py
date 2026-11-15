@@ -224,6 +224,41 @@ class TestBuild(Base):
             rep = self.build([], [proc(1, "a.exe", 10, readable=False)])
         self.assertNotIn("不是管理员", "\n".join(report.render(rep)))
 
+    def test_empty_machine_says_there_is_nothing(self):
+        """一条都没有时不能只留一片空白。
+
+        空机器（CI 的 runner 就是这样）上，`list` 以前只打一个表头就没了 ——
+        用户分不清「真的没有自启项」和「程序没干活」。
+        """
+        rep = self.build([], [])
+        lines = "\n".join(report.render(rep))
+        self.assertIn("没有条目", lines, lines)
+
+    def test_empty_category_says_which_category_is_empty(self):
+        rep = self.build([entry("x")], [])
+        lines = "\n".join(report.render(rep, only="service"))
+        self.assertIn("没有条目", lines, lines)
+        self.assertIn("服务", lines, lines)
+
+    def test_empty_result_with_a_broken_source_says_so(self):
+        rep = self.build([], [])
+        rep.problems.append("计划任务：超时了")
+        lines = "\n".join(report.render(rep))
+        self.assertIn("没有条目", lines)
+        self.assertIn("有来源没读到", lines, lines)
+
+    def test_non_empty_machine_gets_no_empty_notice(self):
+        rep = self.build([entry("x")], [])
+        self.assertNotIn("没有条目", "\n".join(report.render(rep)))
+
+    def test_coverage_note_points_downward(self):
+        """`problems` 是打在**下面**的，提示不能说「见上面」。"""
+        with mock.patch.object(winapi, "COVERAGE", {"mode": "partial", "reason": "自检没过"}):
+            rep = self.build([], [])
+        lines = "\n".join(report.render(rep))
+        self.assertIn("原因见下方", lines, lines)
+        self.assertNotIn("见上面", lines, lines)
+
     def test_coverage_problem_is_surfaced(self):
         with mock.patch.object(winapi, "COVERAGE", {"mode": "partial", "reason": "自检没过"}):
             rep = self.build([], [])
