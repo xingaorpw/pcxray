@@ -7,11 +7,12 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import io
 import unittest
 from unittest import mock
 
-from pcxray import autostart, cli
+from pcxray import autostart, cli, procs
 
 
 def entry(name, kind="run", source="测试"):
@@ -229,6 +230,52 @@ class TestMixedNamesAreAllReported(unittest.TestCase):
         self.assertEqual(code, 1, out)
         self.assertIn("绝对不存在_xyz", out)
         self.assertIn(good.name, out)
+
+
+class TestRamJsonHonoursLimit(unittest.TestCase):
+    """`ram --json` 的 limit 语义要和 `list --json` 一致。
+
+    `--limit` 不写时表格只给 25 行，但脚本要的是全量 —— 所以「没写」和「写了
+    25」必须区分开，JSON 路径不能被表格的默认值截掉。
+    """
+
+    def setUp(self):
+        self.groups = []
+        for i in range(40):
+            group = procs.Group(f"p{i}")
+            group.pids = [i + 1]
+            group.mb = 100.0 - i
+            group.private_mb = 50.0
+            self.groups.append(group)
+
+    def _run(self, argv):
+        captured = io.StringIO()
+        with mock.patch.object(cli.winapi, "processes", return_value=[]), mock.patch.object(
+            cli.procs, "group", return_value=self.groups
+        ), mock.patch.object(cli.procs, "logon_time", return_value=0.0), contextlib.redirect_stdout(captured):
+            code = cli.main(argv)
+        return code, captured.getvalue()
+
+    def test_no_limit_gives_every_group(self):
+        code, out = self._run(["ram", "--json"])
+        self.assertEqual(code, 0)
+        data = json.loads(out)
+        self.assertEqual(len(data["groups"]), 40)
+        self.assertEqual(data["hidden_by_limit"], 0)
+        self.assertEqual(data["group_count"], 40)
+
+    def test_explicit_limit_truncates_and_says_so(self):
+        code, out = self._run(["ram", "--json", "--limit", "3"])
+        self.assertEqual(code, 0)
+        data = json.loads(out)
+        self.assertEqual(len(data["groups"]), 3)
+        self.assertEqual(data["hidden_by_limit"], 37)
+        self.assertEqual(data["group_count"], 40)
+
+    def test_limit_zero_means_all(self):
+        code, out = self._run(["ram", "--json", "--limit", "0"])
+        self.assertEqual(code, 0)
+        self.assertEqual(len(json.loads(out)["groups"]), 40)
 
 
 class TestNegativeLimitsAreRejected(unittest.TestCase):

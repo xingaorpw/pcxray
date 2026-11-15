@@ -155,7 +155,7 @@ def _cmd_list(args) -> int:
 
 
 def _cmd_ram(args) -> int:
-    if args.limit < 0:
+    if args.limit is not None and args.limit < 0:
         # `groups[:-5]` 会静默丢掉最后 5 组，看起来像「程序就这么几个」
         print("  ✗ --limit 不能是负数。0 表示不限，其它值是最多显示几行。", file=sys.stderr)
         return 2
@@ -166,13 +166,18 @@ def _cmd_ram(args) -> int:
         # total_mb 必须等于「各组 mb 相加」—— 用户会拿计算器核。先各自取到
         # 一位小数再求和，否则四舍五入误差会累积出零点几 MB 的差。
         rounded = [round(g.mb, 1) for g in groups]
+        # --limit 在 --json 下也要生效，而且要说明截了 —— 和 list 的语义对齐。
+        # 不传 limit 时给全部（脚本通常要全量）。
+        shown_json = groups[: args.limit] if args.limit else groups  # None / 0 都给全部
         print(
             json.dumps(
                 {
                     "logon": logon,
                     "coverage": winapi.COVERAGE,
                     "total_mb": round(sum(rounded), 1),
-                    "groups": [g.as_dict() for g in groups],
+                    "group_count": len(groups),
+                    "hidden_by_limit": len(groups) - len(shown_json),
+                    "groups": [g.as_dict() for g in shown_json],
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -194,7 +199,9 @@ def _cmd_ram(args) -> int:
     # 子命令的 default 给出（见 build_parser），不能在这里用 `or 25` —— 那会把
     # 用户明确写的 0 也当成「没写」，于是 --limit 0 只显示 25 行，还反过来劝
     # 用户「用 --limit 0 看全部」。
-    cap = args.limit or len(groups)
+    # --limit 不写（None）= 表格默认给前 25 个；写 0 = 全部。
+    # 这样 `ram --json` 能拿到全量（脚本要的就是全量），而表格不会一次刷 159 行。
+    cap = 25 if args.limit is None else (args.limit or len(groups))
     shown_groups = groups[:cap]
     for item in shown_groups:
         rows.append(
@@ -350,8 +357,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_ram = sub.add_parser("ram", help="看谁在后台占内存")
     common(p_ram)
-    # ram 默认只看前 25 个（一屏能看完），list 默认全给
-    p_ram.set_defaults(limit=25)
+    # ram 的表格默认只看前 25 个（一屏能看完），list 默认全给。
+    # 这里给 None 而不是 25：`--json` 要能区分「没写」和「写了 25」——
+    # 脚本要的是全量，不该被表格的默认值截掉。
+    p_ram.set_defaults(limit=None)
     p_ram.set_defaults(func=_cmd_ram)
 
     p_off = sub.add_parser("off", help="关掉自启（会先备份）")

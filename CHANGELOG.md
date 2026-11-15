@@ -25,6 +25,10 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **`ram --json` 完全不认 `--limit`。** 和 `list --json` 两套语义，用户按前者的
+  习惯用后者就懵。现在两边一致：不写 `--limit` 给全量（脚本要的就是全量），
+  写了就截断并报 `hidden_by_limit` / `group_count`。表格的「默认 25 行」改成在
+  表格路径里给，不再冒充用户真的写了 25。
 - **`--json --limit N` 把世界说小了。** 以前 limit 之后才统计，`--json --limit 2`
   会报 `total: 2` —— 脚本看到的是一个「只有两条自启项」的世界，完全不知道还有
   181 条没给。现在 `total` / `enabled` / `disabled` 说的是「命中多少」，`items`
