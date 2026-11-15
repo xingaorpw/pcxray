@@ -3,6 +3,8 @@ name: CI
 on:
   push:
     branches: [main]
+    # 打 tag 时也要跑：发布流程要「等 CI 全绿」，tag 上没跑就没得等
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
@@ -21,6 +23,9 @@ jobs:
             python: "3.10"
           - os: ubuntu-latest
             python: "3.12"
+          # 最新的 3.x：本机 3.13.17 上全套测试是通过的，写进矩阵防止将来踩到
+          - os: ubuntu-latest
+            python: "3.13"
           - os: windows-latest
             python: "3.12"
     steps:
