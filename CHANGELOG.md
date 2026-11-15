@@ -25,6 +25,9 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **网页里点「启用」对挪走的条目是死路。** 界面没有模式开关，一律用标记模式，
+  而被挪走的条目只能靠挪键放回去 —— 点了只会得到一句「要用 --mode move」。
+  现在按条目各自该用的模式分组调用。
 - **被 `--mode move` 挪走的条目，用默认模式 `on` 会报「本来就是开着的」。** 写一个
   启用标记不会把值放回 `Run`，程序照样不启动 —— 报成功是在骗人。现在拒绝并指向
   `--mode move`；`off` 则说「已经挪到不会启动的键里了，不用再关」。

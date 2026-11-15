@@ -446,6 +446,74 @@ class TestBindAddress(unittest.TestCase):
             server.server_close()
 
 
+class TestMovedEntryUsesMoveMode(unittest.TestCase):
+    """界面上没有模式开关，用户点「启用」就该办成。
+
+    被 --mode move 挪走的条目只能靠挪键放回去；如果一律用标记模式，点「启用」
+    只会得到一句「要用 pcxray on 名字 --mode move」—— 在图形界面里等于死路。
+    """
+
+    def setUp(self):
+        self.server = web.make_server(port=0)
+        self.addCleanup(self.server.server_close)
+        self.token = self.server.token
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.addCleanup(self.server.shutdown)
+
+    def test_moved_entry_gets_move_mode_and_plain_entry_gets_flag_mode(self):
+        moved = autostart.Entry(
+            name="挪走的",
+            kind="run",
+            source="注册表 · 当前用户 Run",
+            scope="user",
+            enabled=False,
+            locator={"hive": "HKCU", "subkey": "X-pcxray-disabled", "value": "挪走的", "moved": True},
+        )
+        plain = autostart.Entry(
+            name="正常的",
+            kind="run",
+            source="注册表 · 当前用户 Run",
+            scope="user",
+            locator={"hive": "HKCU", "subkey": "X", "value": "正常的"},
+        )
+        calls = []
+
+        def fake_enable(items, force=False, mode=actions.MODE_FLAG):
+            calls.append(([e.name for e in items], mode))
+            return [actions.Result(e.name, True, "好") for e in items], ""
+
+        with mock.patch.dict(web._STATE, {"entries": [moved, plain]}), mock.patch.object(
+            web.actions, "enable", side_effect=fake_enable
+        ):
+            status, payload = self._post("/api/on", [moved.key, plain.key])
+
+        self.assertEqual(status, 200, payload)
+        self.assertEqual(
+            calls,
+            [(["正常的"], actions.MODE_FLAG), (["挪走的"], actions.MODE_MOVE)],
+            "挪走的条目必须走 move 模式，不然界面里点不动",
+        )
+
+    def _post(self, path, keys):
+        port = self.server.server_address[1]
+        body = json.dumps({"keys": keys}).encode()
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{port}{path}",
+            data=body,
+            headers={
+                "X-PCXRAY-Token": self.token,
+                "Content-Type": "application/json",
+                "Origin": f"http://127.0.0.1:{port}",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=10) as response:
+                return response.status, json.loads(response.read() or b"{}")
+        except urllib.error.HTTPError as exc:
+            return exc.code, json.loads(exc.read() or b"{}")
+
+
 class TestStateChangeIsSerialised(unittest.TestCase):
     """改状态和重扫不能交错。
 

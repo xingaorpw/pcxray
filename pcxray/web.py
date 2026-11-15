@@ -325,9 +325,21 @@ class Handler(BaseHTTPRequestHandler):
             if not picked:
                 self._json(400, {"ok": False, "error": "找不到这些条目，可能已经变了，刷新一下"})
                 return
-            results, backup = (
-                actions.enable(picked, force=force) if turn_on else actions.disable(picked, force=force)
-            )
+            # 被 --mode move 挪走的条目只能靠挪键放回去，标记模式对它无效。界面上
+            # 没有模式开关，用户点「启用」就该办成 —— 按条目各自该用的模式分组调用。
+            moved = [e for e in picked if (e.locator or {}).get("moved")]
+            plain = [e for e in picked if not (e.locator or {}).get("moved")]
+            call = actions.enable if turn_on else actions.disable
+            results: list[actions.Result] = []
+            backups: list[str] = []
+            for group, group_mode in ((plain, actions.MODE_FLAG), (moved, actions.MODE_MOVE)):
+                if not group:
+                    continue
+                group_results, group_backup = call(group, force=force, mode=group_mode)
+                results.extend(group_results)
+                if group_backup:
+                    backups.append(group_backup)
+            backup = backups[0] if backups else ""
             _STATE["report"] = None  # 下次取报告重新扫
         self._json(
             200,
