@@ -134,6 +134,37 @@ def check_web_csrf() -> None:
         server.shutdown()
 
 
+def check_no_handle_leak() -> None:
+    """反复扫描不能漏句柄。
+
+    这条只有真机上量得出来：每个进程开一个 `OpenProcess`、再开一个快照，漏一个
+    短时间看不出来，跑久了就是「用着用着打不开新进程」。预热一轮把 DLL 的一次性
+    开销吃掉，再连续跑，句柄数应该纹丝不动。
+    """
+    import ctypes
+
+    from pcxray import autostart, report, winapi
+
+    k32 = ctypes.windll.kernel32
+    k32.GetCurrentProcess.restype = ctypes.c_void_p
+    k32.GetProcessHandleCount.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32)]
+
+    def handles() -> int:
+        count = ctypes.c_uint32()
+        k32.GetProcessHandleCount(k32.GetCurrentProcess(), ctypes.byref(count))
+        return count.value
+
+    entries, _problems = autostart.scan()
+    process_list = winapi.processes()
+    report.build(entries=entries, process_list=process_list)  # 预热
+    base = handles()
+    for _ in range(3):
+        report.build(entries=entries, process_list=winapi.processes())
+    grown = handles() - base
+    # 留 2 个余量：PowerShell 子进程偶尔会把标准句柄带进来
+    check("反复扫描不漏句柄", grown <= 2, f"多了 {grown} 个")
+
+
 def check_page_markup() -> None:
     """网页的 HTML 结构必须闭合，占位符必须被替换掉。
 
@@ -188,6 +219,7 @@ def main() -> int:
     check_json_filter()
     check_web_csrf()
     check_page_markup()
+    check_no_handle_leak()
     print()
     if FAILED:
         print(f"  {len(FAILED)} 项没通过：{'、'.join(FAILED)}")

@@ -1,7 +1,7 @@
 # pcxray
 
 [![CI](https://github.com/xingaorpw/pcxray/actions/workflows/ci.yml/badge.svg)](https://github.com/xingaorpw/pcxray/actions/workflows/ci.yml)
-[![tests](https://img.shields.io/badge/tests-381%20passed-brightgreen)](https://github.com/xingaorpw/pcxray/tree/main/tests)
+[![tests](https://img.shields.io/badge/tests-385%20passed-brightgreen)](https://github.com/xingaorpw/pcxray/tree/main/tests)
 [![python](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/downloads/)
 [![deps](https://img.shields.io/badge/dependencies-0-brightgreen)](https://github.com/xingaorpw/pcxray/blob/main/pyproject.toml)
 [![license](https://img.shields.io/badge/license-MIT-blue)](https://github.com/xingaorpw/pcxray/blob/main/LICENSE)
@@ -202,7 +202,7 @@ python -m pcxray restore "C:\Users\admin\.pcxray\backup\20261114-224350.json"
   …… 还有 323 份更早的，用 pcxray backups --all 看全部
 ```
 
-每次改动前都会写一份备份，**备份写不进去就不改**。
+每次改动前都会写一份备份，**备份写不进去就不改**。`restore` 不带参数时用最近一份**读得出来**的备份，坏的会跳过并告诉你跳过了哪几份。
 
 ### 网页界面
 
@@ -257,7 +257,7 @@ python -m pcxray off 名字 --force       # 允许改服务（默认只给建议
 ## 开发
 
 ```bash
-python -m unittest discover -s tests -t .     # 381 个测试
+python -m unittest discover -s tests -t .     # 385 个测试
 ```
 
 测试分两类：不依赖 Windows 的逻辑（命令行解析、开关状态解码、内存分组、表格排版、网页接口）在 Linux 上也能跑；真正读写注册表的端到端测试只在 Windows 上跑（`skipUnless`）。CI 两边都跑。

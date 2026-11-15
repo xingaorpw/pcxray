@@ -515,13 +515,48 @@ def describe_backup(path: str) -> tuple[str, str]:
     return created or "时间未知", count
 
 
+def _backup_is_usable(path: str) -> bool:
+    """这份备份能不能拿来还原。
+
+    只看结构，不动任何东西 —— 用来在「用最近一份还原」时跳过坏文件。
+    """
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    ops = payload.get("ops")
+    if not isinstance(ops, list) or not ops:
+        return False
+    return all(isinstance(op, dict) for op in ops)
+
+
 def restore(path: str = "", dry_run: bool = False) -> tuple[list[Result], str]:
     """按备份还原。path 为空时用最近的一份。"""
+    skipped: list[str] = []
     if not path:
         backups = list_backups()
         if not backups:
             return [Result("（还原）", False, "没有任何备份文件")], ""
-        path = backups[0]
+        # 最新的那份可能是坏的：写到一半断电、磁盘满了、被别的东西占用了名字。
+        # 只认「读得出来、结构对、里面有 ops」的，不然用户敲 `pcxray restore`
+        # 只会得到一句「结构不对」，明明前面还有好几份好的。
+        path = ""
+        for candidate in backups:
+            if _backup_is_usable(candidate):
+                path = candidate
+                break
+            skipped.append(os.path.basename(candidate))
+        if not path:
+            return [
+                Result(
+                    "（还原）",
+                    False,
+                    f"最近的 {len(backups)} 份备份都读不出来，没法还原",
+                )
+            ], ""
     try:
         with open(path, "r", encoding="utf-8") as handle:
             payload = json.load(handle)
@@ -540,6 +575,16 @@ def restore(path: str = "", dry_run: bool = False) -> tuple[list[Result], str]:
     if not ops:
         return [Result("（还原）", False, f"这份备份里没有任何要还原的东西：{path}")], path
     results: list[Result] = []
+    if skipped:
+        # 说清楚「用的是哪一份、跳过了哪些」，不然用户会以为还原的是最新的
+        results.append(
+            Result(
+                "（还原）",
+                True,
+                f"跳过了 {len(skipped)} 份读不出来的备份：{'、'.join(skipped[:3])}"
+                + ("……" if len(skipped) > 3 else ""),
+            )
+        )
     for op in ops:
         name = op.get("name", "?")
         if dry_run:

@@ -259,6 +259,71 @@ class TestDescribe(unittest.TestCase):
         self.assertIn("自动", actions._describe({"kind": "service"}, True))
 
 
+class TestRestoreSkipsUnusableBackups(unittest.TestCase):
+    """`restore` 不带参数时跳过读不出来的备份。
+
+    备份写到一半断电、磁盘满、文件被人手改过 —— 最新那份就废了。只认「读得
+    出来、结构对、里面有 ops」的，不然用户敲 `pcxray restore` 只会得到一句
+    「结构不对」，明明前面还有好几份好的。
+    """
+
+    def setUp(self):
+        self._dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._dir.cleanup)
+        patcher = mock.patch.object(actions, "BACKUP_DIR", self._dir.name)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _write(self, name, payload):
+        path = os.path.join(self._dir.name, name)
+        with open(path, "w", encoding="utf-8") as handle:
+            if isinstance(payload, str):
+                handle.write(payload)
+            else:
+                json.dump(payload, handle)
+        return path
+
+    def _good_op(self):
+        return {
+            "kind": "flag",
+            "hive": "HKCU",
+            "subkey": r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run",
+            "value_name": "pcxray_no_such_value",
+            "name": "pcxray_no_such_value",
+            "existed": False,
+            "old": None,
+            "old_str": None,
+            "old_kind": None,
+            "new": "03",
+        }
+
+    def test_picks_older_good_one_and_says_it_skipped(self):
+        self._write("20260101-000001.json", {"created": "2026-01-01 00:00:01", "ops": [self._good_op()]})
+        self._write("20260101-000002.json", "{半截")  # 更新的那份坏了
+        results, path = actions.restore(dry_run=True)
+        self.assertTrue(path.endswith("20260101-000001.json"), path)
+        self.assertTrue(any("跳过" in r.message for r in results), [r.message for r in results])
+        self.assertTrue(any("20260101-000002.json" in r.message for r in results))
+
+    def test_all_unusable_is_a_clean_failure(self):
+        self._write("20260101-000001.json", "{半截")
+        self._write("20260101-000002.json", {"ops": []})
+        results, path = actions.restore(dry_run=True)
+        self.assertEqual(path, "")
+        self.assertEqual(len(results), 1)
+        self.assertFalse(results[0].ok)
+        self.assertIn("都读不出来", results[0].message)
+
+    def test_usable_check_rejects_the_shapes_that_would_crash(self):
+        self.assertFalse(actions._backup_is_usable(self._write("a.json", {"ops": "x"})))
+        self.assertFalse(actions._backup_is_usable(self._write("b.json", {})))
+        self.assertFalse(actions._backup_is_usable(self._write("c.json", {"ops": [1, 2]})))
+        self.assertTrue(actions._backup_is_usable(self._write("d.json", {"ops": [self._good_op()]})))
+
+    def test_usable_check_on_missing_file(self):
+        self.assertFalse(actions._backup_is_usable(os.path.join(self._dir.name, "nope.json")))
+
+
 class TestDescribeBackup(unittest.TestCase):
     """列表里要能看出「哪份是刚才那次」。
 
