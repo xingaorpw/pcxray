@@ -12,6 +12,27 @@ from unittest import mock
 from pcxray import pwsh
 
 
+class TestFindPowerShell(unittest.TestCase):
+    """`shutil.which` 找不到时还要去 System32 找一遍。
+
+    没这一步的话，PATH 被改过的机器上会直接报「没找到 powershell」。
+    """
+
+    def test_falls_back_to_system32(self):
+        with mock.patch.object(pwsh.shutil, "which", return_value=None), mock.patch.object(
+            pwsh.sys, "platform", "win32"
+        ), mock.patch.object(pwsh.os.path, "isfile", return_value=True):
+            found = pwsh._exe()
+        self.assertTrue(found and found.lower().endswith("powershell.exe"), found)
+        self.assertIn("System32", found)
+
+    def test_returns_none_when_nothing_found(self):
+        with mock.patch.object(pwsh.shutil, "which", return_value=None), mock.patch.object(
+            pwsh.sys, "platform", "win32"
+        ), mock.patch.object(pwsh.os.path, "isfile", return_value=False):
+            self.assertIsNone(pwsh._exe())
+
+
 class TestQuote(unittest.TestCase):
     def test_plain(self):
         self.assertEqual(pwsh.ps_quote("abc"), "'abc'")

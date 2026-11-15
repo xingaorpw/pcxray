@@ -17,6 +17,106 @@ from unittest import mock
 from pcxray import actions, autostart, report, web, winapi
 
 
+class TestServeStartup(unittest.TestCase):
+    """`serve()` 是用户真正跑的那条路（`pcxray web`），以前只有集成测试碰过。
+
+    它要在三种情况下都给出人话：起不来端口、正常启动、Ctrl+C 退出。
+    """
+
+    class _FakeServer:
+        def __init__(self, address=("127.0.0.1", 51234), interrupt=False):
+            self.server_address = address
+            self._interrupt = interrupt
+            self.closed = False
+
+        def serve_forever(self):
+            if self._interrupt:
+                raise KeyboardInterrupt
+            raise AssertionError("测试不该真的进服务循环")
+
+        def server_close(self):
+            self.closed = True
+
+    def test_non_windows_exits_2(self):
+        err = io.StringIO()
+        with mock.patch.object(web.winapi, "IS_WINDOWS", False), contextlib.redirect_stderr(err):
+            code = web.serve(port=0, open_browser=False)
+        self.assertEqual(code, 2)
+        self.assertIn("只能在 Windows 上运行", err.getvalue())
+
+    def test_port_failure_goes_to_stderr(self):
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(web.winapi, "IS_WINDOWS", True), mock.patch.object(
+            web, "make_server", side_effect=OSError("端口被占用")
+        ), contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = web.serve(port=1234, open_browser=False)
+        self.assertEqual(code, 1)
+        self.assertIn("端口 1234 起不来", err.getvalue())
+        self.assertEqual(out.getvalue(), "", "错误不能混进正常输出里")
+
+    def test_ctrl_c_closes_the_server(self):
+        server = self._FakeServer(interrupt=True)
+        out = io.StringIO()
+        with mock.patch.object(web.winapi, "IS_WINDOWS", True), mock.patch.object(
+            web, "make_server", return_value=server
+        ), mock.patch.object(web, "_snapshot", return_value=report.Report()), contextlib.redirect_stdout(out):
+            code = web.serve(port=0, open_browser=False)
+        self.assertEqual(code, 0)
+        self.assertTrue(server.closed, "退出时必须 server_close")
+        self.assertIn("51234", out.getvalue(), "要把真实端口打出来")
+
+    def test_unexpected_error_still_closes_the_server(self):
+        class Boom(self._FakeServer):
+            def serve_forever(self):
+                raise RuntimeError("网卡没了")
+
+        server = Boom()
+        with mock.patch.object(web.winapi, "IS_WINDOWS", True), mock.patch.object(
+            web, "make_server", return_value=server
+        ), mock.patch.object(web, "_snapshot", return_value=report.Report()), contextlib.redirect_stdout(
+            io.StringIO()
+        ):
+            with self.assertRaises(RuntimeError):
+                web.serve(port=0, open_browser=False)
+        self.assertTrue(server.closed, "崩了也要关，否则端口一直占着")
+
+
+class TestReadBodyLimits(unittest.TestCase):
+    """POST 请求体的三道闸：长度不是数字、太长、不是 JSON。
+
+    这三条是外部输入的第一道关，以前没测过。
+    """
+
+    def _handler(self, headers, raw=b""):
+        handler = web.Handler.__new__(web.Handler)
+        handler.headers = headers
+        handler.rfile = io.BytesIO(raw)
+        return handler
+
+    def test_non_numeric_content_length_is_empty(self):
+        handler = self._handler({"Content-Length": "abc"})
+        self.assertEqual(handler._read_body(), {})
+
+    def test_missing_content_length_is_empty(self):
+        self.assertEqual(self._handler({})._read_body(), {})
+
+    def test_oversized_body_is_refused_without_reading(self):
+        handler = self._handler({"Content-Length": str(65537)}, raw=b"{}")
+        self.assertEqual(handler._read_body(), {})
+
+    def test_non_json_body_is_empty(self):
+        handler = self._handler({"Content-Length": "5"}, raw=b"hello")
+        self.assertEqual(handler._read_body(), {})
+
+    def test_json_array_is_not_a_dict(self):
+        handler = self._handler({"Content-Length": "2"}, raw=b"[]")
+        self.assertEqual(handler._read_body(), {})
+
+    def test_normal_body_is_parsed(self):
+        handler = self._handler({"Content-Length": "15"}, raw=b'{"names":["a"]}')
+        self.assertEqual(handler._read_body(), {"names": ["a"]})
+
+
 class FakeReport(report.Report):
     def as_dict(self):
         return {

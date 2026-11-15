@@ -8,6 +8,25 @@ from unittest import mock
 from pcxray import safety, winapi
 
 
+class TestArgsOf(unittest.TestCase):
+    """切出 exe 之后的那一段。带引号的路径里可能就有空格，不能按空格切。"""
+
+    def test_quoted_path_without_exe_suffix(self):
+        self.assertEqual(safety._args_of('"C:\\a b\\run" -silent'), "-silent")
+
+    def test_exe_suffix_wins(self):
+        self.assertEqual(safety._args_of(r"C:\\a.exe /min"), "/min")
+
+    def test_plain_words(self):
+        self.assertEqual(safety._args_of("prog -x"), "-x")
+
+    def test_single_word_has_no_args(self):
+        self.assertEqual(safety._args_of("prog"), "")
+
+    def test_empty(self):
+        self.assertEqual(safety._args_of(""), "")
+
+
 class TestRemovableDrive(unittest.TestCase):
     """U 盘 / 移动硬盘上的常驻程序很少是正常的 —— 这条判断以前没被测试碰过。"""
 

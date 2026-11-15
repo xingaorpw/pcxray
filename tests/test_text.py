@@ -7,6 +7,16 @@ import unittest
 from pcxray import text
 
 
+class TestPadWithZeroWidth(unittest.TestCase):
+    """宽度 <= 0 时原样返回 —— 走 truncate 会把内容整段吞掉。"""
+
+    def test_zero_width_keeps_text(self):
+        self.assertEqual(text.pad("内容", 0), "内容")
+
+    def test_negative_width_keeps_text(self):
+        self.assertEqual(text.pad("内容", -5), "内容")
+
+
 class TestWidth(unittest.TestCase):
     def test_ascii_is_one(self):
         self.assertEqual(text.width("abc"), 3)

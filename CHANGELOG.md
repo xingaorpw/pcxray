@@ -25,6 +25,11 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **`serve()` 和 POST 请求体的三道闸没测过。** `pcxray web` 是用户真正跑的那条路，
+  以前只有「起个服务器发请求」的集成测试碰它；起不来端口、Ctrl+C、崩了这三种情况
+  下「服务器关没关」没人验过 —— 不关的话端口会一直被占着。POST 请求体的三道闸
+  （长度不是数字 / 太长 / 不是 JSON）也没测过，那是外部输入的第一道关。
+  覆盖率 91% → 93%（`web.py` 99%、`pwsh.py` 94%、`cli.py` 95%）。
 - **`main()` 自己的分支一条都没测过。** 不带参数 = list、Ctrl+C 退出 130、非 Windows
   退出 2、`--elevate` 提权成功/取消/已是管理员三条路 —— 每条命令都要经过这里。
   顺带补了 `winapi._verify_memory`：它抽样比对未文档化接口和官方接口，对不上就整体
