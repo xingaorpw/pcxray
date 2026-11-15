@@ -260,60 +260,20 @@ def check_page_markup() -> None:
     check("页面里有脚本和样式", "<script>" in page and "<style>" in page)
 
 
-def check_page_js_escapes_hostile_data() -> None:
-    """把页面里那段 JS 真跑一遍（用 node），喂进带标签的数据。
+def _run_page_js(payload: dict, tail: str) -> dict | None:
+    """把页面里那段 JS 放到 node 里跑，返回它 `console.log` 的 JSON。
 
-    静态检查只能证明「`esc` 函数存在」，证明不了「每个插值都调了它」。这段
-    直接把 `draw()` 跑起来看它吐出什么 HTML —— 那才是浏览器会执行的东西。
-    没装 node 就明说跳过，不假装验过。
+    静态检查只能证明「`esc` 函数存在」，证明不了「每个插值都调了它」，也证明
+    不了「筛选逻辑对不对」。这里跑的是浏览器真正会执行的那份代码。
     """
     from pcxray import web
 
     node = shutil.which("node")
     if not node:
-        print("  · 跳过 JS 渲染检查（没装 node）")
-        return
-
-    page = web._PAGE.replace("__TOKEN__", "test-token")
-    match = re.search(r"<script>(.*?)</script>", page, re.S)
+        return None
+    match = re.search(r"<script>(.*?)</script>", web._PAGE.replace("__TOKEN__", "t"), re.S)
     if not match:
-        check("页面里有脚本块", False)
-        return
-    script = match.group(1)
-
-    hostile = "<script>alert(1)</script><img src=x onerror=alert(2)>"
-    payload = {
-        "generated": "2026-01-01 00:00:00",
-        "process_count": 1,
-        "problems": [hostile],
-        "ram": {"total": 8 * 1048576, "available": 4 * 1048576},
-        "background": [{"name": hostile, "mb": 200.0, "count": 1, "path": hostile}],
-        "autostart": {
-            "total": 1,
-            "enabled": 1,
-            "disabled": 0,
-            "memory_mb": 12.5,
-            "items": [
-                {
-                    "key": "k1",
-                    "name": hostile,
-                    "kind": "run",
-                    "command": hostile,
-                    "detail": "",
-                    "source": "注册表 · 用户 Run",
-                    "company": hostile,
-                    "enabled": True,
-                    "can_disable": True,
-                    "needs_force": False,
-                    "refuse": "",
-                    "flags": ["可疑路径"],
-                    "running_mb": 12.5,
-                    "exe": hostile,
-                }
-            ],
-        },
-    }
-
+        return {}
     harness = (
         "const els={};"
         "function el(id){if(!els[id])els[id]={innerHTML:'',textContent:'',"
@@ -321,13 +281,12 @@ def check_page_js_escapes_hostile_data() -> None:
         "global.document={getElementById:el,querySelectorAll:()=>[]};"
         "global.fetch=async()=>{throw new Error('不该发请求')};"
         "global.confirm=()=>true;\n"
-        + script
+        + match.group(1)
         + "\nDATA = "
         + json.dumps(payload, ensure_ascii=False)
-        + ";draw();console.log(JSON.stringify({t:el('table').innerHTML,"
-        "f:el('foot').innerHTML,s:el('stats').innerHTML}));"
+        + ";"
+        + tail
     )
-
     with tempfile.TemporaryDirectory() as tmp:
         path = os.path.join(tmp, "page.js")
         with open(path, "w", encoding="utf-8") as handle:
@@ -336,15 +295,100 @@ def check_page_js_escapes_hostile_data() -> None:
             [node, path], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120
         )
     if proc.returncode != 0:
-        check("页面 JS 能跑起来", False, proc.stderr.strip()[:300])
-        return
+        return {"__error__": proc.stderr.strip()[:300]}
+    try:
+        return json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return {"__error__": proc.stdout.strip()[:300]}
 
-    blob = json.loads(proc.stdout)
+
+def _item(name: str, kind: str, **extra) -> dict:
+    base = {
+        "key": name,
+        "name": name,
+        "kind": kind,
+        "command": r"C:\x.exe",
+        "detail": "",
+        "source": "注册表 · 用户 Run",
+        "company": "某公司",
+        "enabled": True,
+        "can_disable": True,
+        "needs_force": False,
+        "refuse": "",
+        "flags": [],
+        "running_mb": 0,
+        "exe": r"C:\x.exe",
+    }
+    base.update(extra)
+    return base
+
+
+def _payload(items: list[dict], **extra) -> dict:
+    data = {
+        "generated": "2026-01-01 00:00:00",
+        "process_count": 1,
+        "problems": [],
+        "ram": {"total": 8 * 1048576, "available": 4 * 1048576},
+        "background": [],
+        "autostart": {
+            "total": len(items),
+            "enabled": len(items),
+            "disabled": 0,
+            "memory_mb": 12.5,
+            "items": items,
+        },
+    }
+    data.update(extra)
+    return data
+
+
+def check_page_js_escapes_hostile_data() -> None:
+    """喂进带标签的数据，看页面 JS 吐出什么 HTML。"""
+    hostile = "<script>alert(1)</script><img src=x onerror=alert(2)>"
+    payload = _payload(
+        [_item(hostile, "run", command=hostile, company=hostile, exe=hostile, flags=["可疑路径"])],
+        problems=[hostile],
+        background=[{"name": hostile, "mb": 200.0, "count": 1, "path": hostile}],
+    )
+    blob = _run_page_js(
+        payload,
+        "draw();console.log(JSON.stringify({t:el('table').innerHTML,"
+        "f:el('foot').innerHTML,s:el('stats').innerHTML}));",
+    )
+    if blob is None:
+        print("  · 跳过 JS 渲染检查（没装 node）")
+        return
+    if "__error__" in blob:
+        check("页面 JS 能跑起来", False, blob["__error__"])
+        return
     rendered = blob["t"] + blob["f"] + blob["s"]
     check("页面 JS 能跑起来", True)
     check("危险标签没被原样写进 HTML", "<script>" not in rendered and "<img" not in rendered)
     check("危险内容被转义了", "&lt;script&gt;" in rendered and "&lt;img" in rendered)
     check("正常内容仍然渲染", "可疑路径" in rendered and "注册表 · 用户 Run" in rendered)
+
+
+def check_page_js_filters() -> None:
+    """默认只显示「全部常用」，点分类看那一类，搜不到要说清是搜不到。"""
+    payload = _payload([_item("run-item", "run"), _item("svc-item", "service")])
+    blob = _run_page_js(
+        payload,
+        "function h(){return el('table').innerHTML}"
+        "draw();const all=h();"
+        "q='svc';draw();const miss=h();"
+        "kind='service';draw();const svc=h();"
+        "console.log(JSON.stringify({all:all,miss:miss,svc:svc}));",
+    )
+    if blob is None:
+        print("  · 跳过 JS 筛选检查（没装 node）")
+        return
+    if "__error__" in blob:
+        check("页面 JS 筛选能跑", False, blob["__error__"])
+        return
+    check("默认视图含启动项、不含服务", "run-item" in blob["all"] and "svc-item" not in blob["all"])
+    check("切到服务分类能看到服务", "svc-item" in blob["svc"])
+    plain = re.sub(r"<[^>]+>", "", blob["miss"])
+    check("搜不到时说的是搜不到，不是「这一类没有」", "没有匹配" in plain and "全部常用" in plain, plain.strip()[:60])
 
 
 def main() -> int:
@@ -354,6 +398,7 @@ def main() -> int:
     check_web_csrf()
     check_page_markup()
     check_page_js_escapes_hostile_data()
+    check_page_js_filters()
     check_no_handle_leak()
     check_json_contract()
     print()

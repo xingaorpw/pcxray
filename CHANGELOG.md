@@ -25,6 +25,11 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **网页里搜不到东西时说的是「这一类没有条目」。** 默认只显示「全部常用」，
+  搜一个服务名（比如 `svc`）会得到这句 —— 用户会以为整类都是空的，其实服务在
+  另一个分类里。现在分开说：「『全部常用』里没有匹配『svc』的条目 —— 切到别的
+  分类再找找」。顺带把页面 JS 的筛选逻辑也真跑起来验了：默认视图含启动项不含
+  服务、点「服务」能看到服务。
 - **网页的 XSS 只做了静态检查。** 以前只验「标签闭合」和「`esc` 函数存在」——
   证明不了每个插值都调了它。现在 `scripts/ci_checks.py` 把页面里那段 JS **真跑
   一遍**（用 node），喂进 `<script>alert(1)</script><img src=x onerror=…>` 再看它

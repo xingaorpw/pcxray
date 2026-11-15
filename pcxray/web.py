@@ -141,7 +141,12 @@ function draw(){
     return okKind && (!q || hay.includes(q));
   });
   if(!items.length){
-    document.getElementById("table").innerHTML='<div class="empty">这一类没有条目</div>';
+    // 搜不到时说「这一类没有条目」会让人以为整类都是空的 —— 其实只是没在
+    // 当前分类里匹配上（默认只显示「全部常用」，服务在另一个分类里）
+    const scope = kind ? "当前分类" : "「全部常用」";
+    document.getElementById("table").innerHTML = q
+      ? `<div class="empty">${scope}里没有匹配「${esc(q)}」的条目 —— 切到别的分类再找找</div>`
+      : `<div class="empty">${scope}没有条目</div>`;
     return;
   }
   const rows=items.map(i=>{
