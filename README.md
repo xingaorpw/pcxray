@@ -160,7 +160,7 @@ python -m pcxray off pcxray_demo
 ```
 
 ```text
-  ✓ pcxray_demo　已写入开关标记
+  ✓ pcxray_demo　已关掉（重启后生效）
 
   备份已写入：C:\Users\admin\.pcxray\backup\20261115-032443.json
   反悔就运行：pcxray restore "C:\Users\admin\.pcxray\backup\20261115-032443.json"

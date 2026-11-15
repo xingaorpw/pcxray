@@ -468,7 +468,13 @@ def _apply(plan: dict, turn_on: bool) -> Result:
         existed, got, _kind = _read_value(hive, subkey, value_name)
         if not existed or not isinstance(got, (bytes, bytearray)) or bytes(got) != data:
             return Result(plan["name"], False, "写入后读回来的值和预期不一致，已中止")
-        return Result(plan["name"], True, "已写入开关标记")
+        # 两个方向以前都说「已写入开关标记」—— 一条一条看下来，看不出这一条
+        # 现在到底是开着还是关着
+        return Result(
+            plan["name"],
+            True,
+            "已关掉（重启后生效）" if not turn_on else "已打开",
+        )
 
     if kind == "move":
         hive, source_key = plan["hive"], plan["subkey"]

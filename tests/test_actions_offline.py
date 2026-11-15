@@ -789,7 +789,8 @@ class TestRepeatedChangesAreNoOps(unittest.TestCase):
         results, backup = actions.disable([self._entry()])
         self.assertTrue(backup, "改了就得备份")
         self.assertEqual(len(self.written), 1)
-        self.assertIn("已写入", results[0].message)
+        # 提示要说清方向：off 和 on 以前都是「已写入开关标记」，看不出这条现在是开是关
+        self.assertIn("已关掉", results[0].message)
 
     def test_on_after_another_tool_disabled_it_still_writes(self):
         # 0x04 是别的工具留下的「关」标记，对它执行 on 是真改动
