@@ -382,7 +382,18 @@ def render(report: Report, limit: int = 0, only: str = "") -> list[str]:
                     " ".join(mark),
                 ]
             )
-        header = f"  {_kind_label(only)}" if only else "  开机自启（注册表 + 启动文件夹）"
+        if only:
+            header = f"  {_kind_label(only)}"
+        else:
+            # 只扫了一部分来源时别把没扫的也写进标题（--include registry 就只
+            # 扫了注册表，标题写「注册表 + 启动文件夹」是错的）
+            kinds = {i.entry.kind for i in report.items}
+            if kinds and kinds <= {"run", "run32", "runonce"}:
+                header = "  开机自启（注册表）"
+            elif kinds == {"folder"}:
+                header = "  开机自启（启动文件夹）"
+            else:
+                header = "  开机自启（注册表 + 启动文件夹）"
         lines.append(header)
         lines.extend(
             "  " + line

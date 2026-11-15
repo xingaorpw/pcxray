@@ -254,6 +254,29 @@ class TestEmptyMachine(unittest.TestCase):
         self.assertEqual(data["background"], [])
 
 
+class TestHeaderMatchesWhatWasScanned(unittest.TestCase):
+    """标题不能写没扫的来源。
+
+    `--include registry` 只扫了注册表，标题还写「注册表 + 启动文件夹」就是在
+    暗示启动文件夹也查过了、只是没有条目。
+    """
+
+    def _entry(self, kind, name):
+        return autostart.Entry(name=name, kind=kind, source="x", scope="user")
+
+    def test_registry_only(self):
+        rep = build([self._entry("run", "a"), self._entry("runonce", "b")], [])
+        self.assertIn("开机自启（注册表）", "\n".join(render(rep)))
+
+    def test_folder_only(self):
+        rep = build([self._entry("folder", "a.lnk")], [])
+        self.assertIn("开机自启（启动文件夹）", "\n".join(render(rep)))
+
+    def test_mixed_keeps_the_combined_label(self):
+        rep = build([self._entry("run", "a"), self._entry("folder", "b.lnk")], [])
+        self.assertIn("开机自启（注册表 + 启动文件夹）", "\n".join(render(rep)))
+
+
 class TestCaveatSurfacing(unittest.TestCase):
     """扫描器「没查清楚」的话必须出现在表格里。
 

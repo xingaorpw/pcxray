@@ -25,6 +25,9 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **标题写没扫的来源。** `--include registry` 只扫了注册表，标题还是「注册表 +
+  启动文件夹」，等于暗示启动文件夹也查过了、只是没有条目。现在标题按实际扫到的
+  来源生成。
 - **`off A B` 里有一个名字找不到时，那条错误被吞了。** 只要有一条能解析出来，
   程序就把「找不到 B」整条丢掉，只打印 A 的成功、退出码 0 —— 用户以为两个都办了。
   现在两条都报，退出码按最坏的那条算。
