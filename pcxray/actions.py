@@ -338,6 +338,19 @@ def _plan(entry, turn_on: bool, mode: str) -> dict | None:
                 "value_kind": old_kind,
                 "name": entry.name,
             }
+        if locator.get("moved"):
+            # 这一条被 `--mode move` 挪到了 Windows 不读的键里。标记模式对它没有
+            # 意义：写个「启用」标记不会把它放回 Run，报成功就是在骗人。
+            if turn_on:
+                return {
+                    "name": entry.name,
+                    "refuse": "这一条被 --mode move 挪到了不会启动的键里，要用 pcxray on 名字 --mode move 才放得回去",
+                }
+            return {
+                "name": entry.name,
+                "noop": True,
+                "noop_message": "已经挪到不会启动的键里了，不用再关",
+            }
         approved = _approved_subkey(entry.kind)
         existed, old_value, old_kind = _read_value(hive, approved, value)
         # 老值可能不是 bytes —— 本机 HKCU 里真有一条 REG_SZ 的 StartupApproved
@@ -527,9 +540,10 @@ def _run(items, turn_on: bool, force: bool, dry_run: bool, mode: str) -> tuple[l
             skipped.append(Result(entry.name, False, f"跳过：{plan['refuse']}"))
             continue
         if plan.get("noop"):
-            already.append(
-                Result(entry.name, True, "本来就是开着的，没动" if turn_on else "本来就是关着的，没动")
+            message = plan.get("noop_message") or (
+                "本来就是开着的，没动" if turn_on else "本来就是关着的，没动"
             )
+            already.append(Result(entry.name, True, message))
             continue
         plans.append(plan)
 

@@ -361,6 +361,57 @@ class TestFolderItemInMoveMode(unittest.TestCase):
         self.assertIn("StartupApproved", plan["subkey"])
 
 
+class TestMovedEntryInFlagMode(unittest.TestCase):
+    """被 --mode move 挪走的条目，标记模式对它没有意义。
+
+    写一个「启用」标记不会把值放回 Run，程序照样不启动 —— 报成功就是在骗人。
+    """
+
+    def _entry(self):
+        return autostart.Entry(
+            name="某条目",
+            kind="run",
+            source="注册表 · 当前用户 Run",
+            scope="user",
+            enabled=False,
+            command=r"C:\x\a.exe",
+            exe=r"C:\x\a.exe",
+            locator={
+                "hive": "HKCU",
+                "subkey": r"Software\Microsoft\Windows\CurrentVersion\Run-pcxray-disabled",
+                "value": "某条目",
+                "moved": True,
+            },
+        )
+
+    def test_enable_refuses_and_points_at_move_mode(self):
+        plan = actions._plan(self._entry(), True, actions.MODE_FLAG)
+        self.assertIn("refuse", plan)
+        self.assertIn("--mode move", plan["refuse"])
+
+    def test_enable_returns_failure_without_writing(self):
+        results, backup = actions.enable([self._entry()])
+        self.assertEqual(backup, "")
+        self.assertEqual(len(results), 1)
+        self.assertFalse(results[0].ok)
+        self.assertIn("--mode move", results[0].message)
+
+    def test_disable_is_a_noop_with_its_own_wording(self):
+        results, backup = actions.disable([self._entry()])
+        self.assertEqual(backup, "")
+        self.assertTrue(results[0].ok)
+        self.assertIn("不用再关", results[0].message)
+
+    def test_move_mode_still_puts_it_back(self):
+        # 同一个条目用 --mode move 是有得办的（这里只验计划，不碰注册表）
+        with mock.patch.object(actions, "_read_value", return_value=(True, r"C:\x\a.exe", 1)):
+            plan = actions._plan(self._entry(), True, actions.MODE_MOVE)
+        self.assertIsNotNone(plan)
+        self.assertEqual(plan["kind"], "move")
+        self.assertTrue(plan["subkey"].endswith(autostart.DISABLED_SUFFIX))
+        self.assertFalse(plan["target_subkey"].endswith(autostart.DISABLED_SUFFIX))
+
+
 class TestRestoreRefusesWhatItCannotRead(unittest.TestCase):
     """认不出来的东西不能报「已还原」。
 
