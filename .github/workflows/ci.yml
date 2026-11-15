@@ -47,13 +47,10 @@ jobs:
         run: pcxray list --limit 5
       - name: 看内存
         run: pcxray ram --limit 5
-      - name: JSON 输出能被解析
-        run: python -c "import json,subprocess; d=json.loads(subprocess.run(['pcxray','list','--json'],capture_output=True,text=True,encoding='utf-8').stdout); assert 'autostart' in d; print('ok', d['autostart']['total'])"
-      - name: 网页接口能起来
-        run: |
-          python -c "import threading,urllib.request,json; from pcxray import web; s=web.make_server(0); threading.Thread(target=s.serve_forever,daemon=True).start(); p=s.server_address[1]; d=json.loads(urllib.request.urlopen(f'http://127.0.0.1:{p}/api/report').read()); print('ok', d['process_count']); s.shutdown()"
       - name: 不存在的名字必须被拒绝（返回非 0）
         run: |
           pcxray off 绝对不存在的条目名_xyz
           if ($LASTEXITCODE -eq 0) { exit 1 } else { exit 0 }
         shell: pwsh
+      - name: 端到端自检（坏参数、--json 过滤、网页令牌）
+        run: python scripts/ci_checks.py
