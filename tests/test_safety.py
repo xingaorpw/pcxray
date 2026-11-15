@@ -3,8 +3,33 @@
 from __future__ import annotations
 
 import unittest
+from unittest import mock
 
-from pcxray import safety
+from pcxray import safety, winapi
+
+
+class TestRemovableDrive(unittest.TestCase):
+    """U 盘 / 移动硬盘上的常驻程序很少是正常的 —— 这条判断以前没被测试碰过。"""
+
+    def test_removable_drive_is_suspect(self):
+        with mock.patch.object(winapi, "IS_WINDOWS", True), mock.patch.object(
+            winapi, "drive_type", return_value=2
+        ):
+            reason = safety.suspect_path(r"E:\tools\a.exe")
+        self.assertIn("可移动磁盘", reason)
+
+    def test_fixed_drive_is_not_suspect(self):
+        with mock.patch.object(winapi, "IS_WINDOWS", True), mock.patch.object(
+            winapi, "drive_type", return_value=3
+        ):
+            self.assertEqual(safety.suspect_path(r"E:\tools\a.exe"), "")
+
+    def test_drive_probe_failure_does_not_crash(self):
+        # 盘符在、但探不到类型（比如刚拔掉的 U 盘）时不能崩
+        with mock.patch.object(winapi, "IS_WINDOWS", True), mock.patch.object(
+            winapi, "drive_type", side_effect=OSError("设备未就绪")
+        ):
+            self.assertEqual(safety.suspect_path(r"E:\tools\a.exe"), "")
 
 
 class TestProtectedProcess(unittest.TestCase):

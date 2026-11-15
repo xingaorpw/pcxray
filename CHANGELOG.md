@@ -25,6 +25,11 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **报告层的标记和来源标签有几条分支从没被渲染测试碰到。** 「不显示窗口」
+  「!可疑」「同一程序 N 条」「无发行商」、服务/Run32/RunOnce 的来源标签、扫描器的
+  caveat 有没有真的进表格 —— 这些是用户判断「这条要不要关」的依据。补了 12 条。
+  `safety` 的「程序在可移动磁盘上」也没测过（U 盘上的常驻程序很少是正常的）。
+  总覆盖率 89% → 90%。
 - **命令行入口和 PowerShell 的失败路径基本没测。** 量了一下覆盖率：`cli.py` 82%
   （`on` / `restore` / `backups` / `list --json` 四条命令完全没有 CLI 级测试），
   `pwsh.py` 73%（超时、启动失败、空输出、GBK 解码、警告行后面跟 JSON 这些路径

@@ -34,6 +34,103 @@ def entry(name, kind="run", scope="user", exe="", enabled=True, **kwargs):
     )
 
 
+class TestShortSourceAndMarks(unittest.TestCase):
+    """来源标签和行内标记以前有几条分支没被渲染测试碰到。
+
+    这些标记是用户判断「这条要不要关」的依据之一：漏一个「!可疑」等于把
+    一条可疑项伪装成正常项。
+    """
+
+    def _entry(self, **kwargs):
+        base = dict(name="X", kind="run", source="注册表 · 当前用户 Run", scope="user")
+        base.update(kwargs)
+        return autostart.Entry(**base)
+
+    def test_source_labels_cover_every_kind(self):
+        cases = {
+            ("run", "user"): "用户 Run",
+            ("run", "machine"): "所有用户 Run",
+            ("runonce", "user"): "RunOnce",
+            ("run32", "machine"): "所有用户 Run32",
+            ("task", "user"): "计划任务",
+            ("service", "machine"): "服务",
+        }
+        for (kind, scope), expected in cases.items():
+            with self.subTest(kind=kind, scope=scope):
+                got = report._short_source(self._entry(kind=kind, scope=scope))
+                self.assertEqual(got, expected)
+
+    def test_folder_label_depends_on_scope(self):
+        self.assertEqual(report._short_source(self._entry(kind="folder", scope="user")), "用户启动夹")
+        self.assertEqual(report._short_source(self._entry(kind="folder", scope="machine")), "公共启动夹")
+
+    def _item(self, **fields):
+        item = report.Item(self._entry())
+        for key, value in fields.items():
+            setattr(item, key, value)
+        return item
+
+    def test_hidden_mark_is_rendered(self):
+        item = self._item(exists=True, hidden=True, company="某公司")
+        self.assertIn("不显示窗口", item.flags)
+
+    def test_suspect_mark_is_rendered(self):
+        item = self._item(exists=True, suspect="在临时目录里", company="某公司")
+        self.assertIn("可疑路径", item.flags)
+
+    def test_missing_file_mark_is_rendered(self):
+        item = self._item(exists=False)
+        self.assertIn("文件不存在", item.flags)
+
+    def test_running_mark_is_rendered(self):
+        item = self._item(exists=True, runs=[object()], company="某公司")
+        self.assertIn("正在运行", item.flags)
+
+    def test_shared_program_is_explained(self):
+        # 两条自启项指向同一个 exe 时，同一笔内存会在两行里各出现一次
+        item = self._item(exists=True, shared=2, company="某公司")
+        self.assertIn("同一程序 2 条", item.flags)
+
+    def test_missing_publisher_is_flagged(self):
+        item = self._item(exists=True, company="")
+        self.assertIn("无发行商", item.flags)
+
+    def test_caveat_from_scanner_reaches_the_table(self):
+        # 扫描器发现但没法用短标签概括的情况写在 entry.caveat 里；
+        # 以前这些只进 JSON，命令行一个字都不显示
+        item = report.Item(self._entry(caveat="没有命令行，靠 COM 启动"))
+        self.assertIn("没有命令行，靠 COM 启动", item.flags)
+
+    def test_render_shows_the_marks_in_the_row(self):
+        item = self._item(exists=False, suspect="在临时目录里", hidden=True, company="")
+        rep = report.Report()
+        rep.items = [item]
+        lines = report.render(rep)
+        row = next(line for line in lines if "X" in line and "!" in line)
+        self.assertIn("!文件没了", row)
+        self.assertIn("!可疑", row)
+        self.assertIn("不显窗", row)
+
+
+class TestBuildScansWhenGivenNothing(unittest.TestCase):
+    """`build()` 不传 entries 时要自己扫，并且把「读不到」带上。
+
+    以前只测过「传 entries」的路径，`build()` 自己调 scan 的那段没人走过。
+    """
+
+    def test_build_without_entries_scans_and_keeps_problems(self):
+        entries = [
+            autostart.Entry(name="X", kind="run", source="注册表 · 当前用户 Run", scope="user")
+        ]
+        with mock.patch.object(report.autostart, "scan", return_value=(entries, ["服务：读不到"])) as scan, mock.patch.object(
+            report.winapi, "processes", return_value=[]
+        ), mock.patch.object(report.winapi, "is_admin", return_value=False):
+            rep = report.build()
+        scan.assert_called_once()
+        self.assertEqual(len(rep.items), 1)
+        self.assertIn("服务：读不到", rep.problems)
+
+
 class Base(unittest.TestCase):
     def setUp(self):
         self.patchers = [

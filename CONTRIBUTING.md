@@ -26,6 +26,37 @@ python -m pcxray list
 4. 在 `pcxray/safety.py` 的 `refuse_reason()` 里想清楚：这条能不能关？关错会怎样？
 5. 加测试。至少要有：解析逻辑的单元测试 + 一条在 Windows 上真跑的端到端测试。
 
+## 写测试时的一个坑
+
+`winapi` / `pwsh` 是在**函数内部**懒导入的（为了在非 Windows 上也能 import 整个包）。
+所以 `mock.patch.object(actions, "pwsh", ...)` 会报 `AttributeError: module
+'pcxray.actions' has no attribute 'pwsh'` —— 模块级根本没有这个名字。
+
+**patch 被导入的那个模块，不要 patch 导入方：**
+
+```python
+from pcxray import actions, pwsh
+
+# 对：懒导入拿到的就是同一个模块对象
+with mock.patch.object(pwsh, "run_text", return_value=(True, "Manual", "")):
+    actions._set_service("X", False)
+```
+
+同一个坑踩了两次（`actions.pwsh`、`safety.winapi`），记在这儿。
+
+## 覆盖率
+
+不是 KPI，是找「哪段逻辑一次都没跑过」的工具：
+
+```bash
+python -m pip install coverage      # 只是开发工具，不进项目依赖
+python -m coverage run --source=pcxray -m unittest discover -s tests -t .
+python -m coverage report --show-missing --skip-covered
+```
+
+优先补**判断成功/失败**的那几行（「改完读回来对一遍」「出错时报什么」），
+而不是为了数字去点没用的分支。
+
 ## 提交信息
 
 用 `feat:` / `fix:` / `docs:` / `test:` / `refactor:` 前缀，一句话说清改了什么。
