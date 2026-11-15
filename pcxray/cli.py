@@ -351,6 +351,26 @@ def _cmd_backups(args) -> int:
     return 0
 
 
+def _cmd_prune(args) -> int:
+    if args.keep < 1:
+        # 0 等于「全删」—— 备份全没了就没法反悔，这种事不能靠用户猜
+        print("  ✗ --keep 至少是 1。全删备份等于放弃反悔的机会。", file=sys.stderr)
+        return 2
+    removed, kept, freed = actions.prune(args.keep, dry_run=args.dry_run)
+    if not removed:
+        print(f"  只有 {kept} 份备份，没超过 {args.keep} 份，不用清")
+        return 0
+    verb = "将要删掉" if args.dry_run else "已删掉"
+    print(f"  {verb} {len(removed)} 份旧备份，留了 {kept} 份，释放 {text.mb(freed / 1048576)}")
+    for path in removed[:5]:
+        print(f"    {os.path.basename(path)}")
+    if len(removed) > 5:
+        print(f"    …… 还有 {len(removed) - 5} 份")
+    if args.dry_run:
+        print("  这是演练，什么都没删。去掉 --dry-run 才会真删。")
+    return 0
+
+
 def _cmd_web(args) -> int:
     from . import web
 
@@ -417,6 +437,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_backups = sub.add_parser("backups", help="列出备份")
     p_backups.add_argument("--all", action="store_true", help="列出全部（默认只给最近 10 份）")
     p_backups.set_defaults(func=_cmd_backups)
+
+    p_prune = sub.add_parser("prune", help="清掉旧备份，只留最近几份")
+    p_prune.add_argument("--keep", type=int, default=20, help="留最近几份（默认 20）")
+    p_prune.add_argument("--dry-run", action="store_true", help="只说要删哪些，不真删")
+    p_prune.set_defaults(func=_cmd_prune)
 
     p_web = sub.add_parser("web", help="打开本地界面")
     p_web.add_argument("--port", type=int, default=0, help="端口，默认自动挑一个空闲的")

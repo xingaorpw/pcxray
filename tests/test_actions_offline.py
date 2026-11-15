@@ -324,6 +324,68 @@ class TestRestoreSkipsUnusableBackups(unittest.TestCase):
         self.assertFalse(actions._backup_is_usable(os.path.join(self._dir.name, "nope.json")))
 
 
+class TestPruneKeepsTheNewest(unittest.TestCase):
+    """备份会无限长。只留最近的若干份，而且只碰自己的目录。"""
+
+    def setUp(self):
+        self._dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._dir.cleanup)
+        patcher = mock.patch.object(actions, "BACKUP_DIR", self._dir.name)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _make(self, count: int) -> list[str]:
+        paths = []
+        for i in range(count):
+            path = os.path.join(self._dir.name, f"2026010{i + 1}-000000.json")
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump({"created": "2026-01-01 00:00:00", "ops": []}, handle)
+            paths.append(path)
+        return paths
+
+    def test_keeps_the_newest_and_deletes_the_rest(self):
+        paths = self._make(5)
+        removed, kept, freed = actions.prune(2)
+        self.assertEqual(len(removed), 3)
+        self.assertEqual(kept, 2)
+        self.assertGreater(freed, 0)
+        left = sorted(os.path.basename(p) for p in actions.list_backups())
+        self.assertEqual(left, [os.path.basename(paths[3]), os.path.basename(paths[4])])
+        # 删掉的必须是最旧的那三份
+        self.assertEqual(sorted(os.path.basename(p) for p in removed),
+                         sorted(os.path.basename(p) for p in paths[:3]))
+
+    def test_nothing_to_do(self):
+        self._make(3)
+        removed, kept, freed = actions.prune(10)
+        self.assertEqual((removed, kept, freed), ([], 3, 0))
+
+    def test_zero_keep_is_refused(self):
+        self._make(3)
+        with self.assertRaises(ValueError):
+            actions.prune(0)
+        self.assertEqual(len(actions.list_backups()), 3, "拒绝了就不能真删")
+
+    def test_dry_run_deletes_nothing(self):
+        self._make(4)
+        removed, kept, _freed = actions.prune(1, dry_run=True)
+        self.assertEqual(len(removed), 3)
+        self.assertEqual(kept, 1)
+        self.assertEqual(len(actions.list_backups()), 4, "演练不能真删")
+
+    def test_other_files_are_left_alone(self):
+        self._make(2)
+        stray = os.path.join(self._dir.name, "notes.txt")
+        with open(stray, "w", encoding="utf-8") as handle:
+            handle.write("别删我")
+        removed, _kept, _freed = actions.prune(1)
+        self.assertEqual(len(removed), 1)
+        self.assertTrue(os.path.isfile(stray), "只该删 .json")
+
+    def test_empty_dir_is_fine(self):
+        self.assertEqual(actions.prune(5), ([], 0, 0))
+
+
 class TestRepeatedChangesAreNoOps(unittest.TestCase):
     """已经是目标状态就别再写一遍。
 

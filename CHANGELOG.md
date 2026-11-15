@@ -25,6 +25,9 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **备份只增不减，没有任何入口能清。** 每次改自启项存一份，本机已经攒了 337 份
+  `2026xxxx-xxxxxx.json`，全在用户主目录里。新增 `pcxray prune --keep 20`
+  （`--dry-run` 先看要删哪些），只删自己目录里的 `.json`，`--keep` 小于 1 直接拒绝。
 - **重复关一条已经关掉的自启项，还是会报「已写入开关标记」。** 还会再写一份
   备份。用户会以为刚才那次没生效，备份目录也跟着长胖（本机已经攒了 300 多份）。
   现在已经是目标状态就报「本来就是关着的，没动」，不写备份、不动注册表。

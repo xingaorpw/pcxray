@@ -237,6 +237,36 @@ class _StubReport:
         self.problems: list[str] = []
 
 
+class TestPruneCommand(unittest.TestCase):
+    def test_zero_keep_exits_2(self):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = cli.main(["prune", "--keep", "0"])
+        self.assertEqual(code, 2)
+        self.assertIn("至少是 1", err.getvalue())
+
+    def test_nothing_to_do_says_so(self):
+        captured = io.StringIO()
+        with mock.patch.object(cli.actions, "prune", return_value=([], 3, 0)), contextlib.redirect_stdout(
+            captured
+        ):
+            code = cli.main(["prune"])
+        self.assertEqual(code, 0)
+        self.assertIn("不用清", captured.getvalue())
+
+    def test_dry_run_says_nothing_was_deleted(self):
+        captured = io.StringIO()
+        removed = [f"/x/2026010{i}-000000.json" for i in range(3)]
+        with mock.patch.object(
+            cli.actions, "prune", return_value=(removed, 20, 4096)
+        ), contextlib.redirect_stdout(captured):
+            code = cli.main(["prune", "--dry-run"])
+        self.assertEqual(code, 0)
+        text = captured.getvalue()
+        self.assertIn("将要删掉 3 份", text)
+        self.assertIn("什么都没删", text)
+
+
 class TestNarrowTerminalIsCalledOut(unittest.TestCase):
     """表格比窗口宽时要说一句。
 

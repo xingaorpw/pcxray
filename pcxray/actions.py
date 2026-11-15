@@ -223,6 +223,46 @@ def list_backups() -> list[str]:
     )
 
 
+def prune(keep: int, dry_run: bool = False) -> tuple[list[str], int, int]:
+    """删掉旧备份，只留最近 `keep` 份。返回 (删掉的, 留下的份数, 释放的字节)。
+
+    备份是无限增长的：每次改自启项都存一份，一个用了一年的机器上能攒出几百份
+    `2026xxxx-xxxxxx.json`，全在用户主目录里，而且没有任何入口能清。只留最近的
+    若干份就够反悔了 —— 真要回到很久以前，用户自己会留着文件。
+
+    只删这个目录里的 `.json`，别的一概不碰。
+    """
+    backups = list_backups()  # 新的在前
+    if keep < 1:
+        raise ValueError("keep 必须 >= 1")
+    if len(backups) <= keep:
+        return [], len(backups), 0
+    doomed = backups[keep:]
+    removed: list[str] = []
+    freed = 0
+    for path in doomed:
+        # 再核一遍：只删 BACKUP_DIR 里的 .json，别顺着软链接或相对路径跑出去
+        if os.path.dirname(os.path.abspath(path)) != os.path.abspath(BACKUP_DIR):
+            continue
+        if not path.endswith(".json"):
+            continue
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            size = 0
+        if dry_run:
+            removed.append(path)
+            freed += size
+            continue
+        try:
+            os.remove(path)
+        except OSError:
+            continue
+        removed.append(path)
+        freed += size
+    return removed, len(backups) - len(removed), freed
+
+
 # ------------------------------------------------------------------ 单个条目
 
 

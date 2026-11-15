@@ -1,7 +1,7 @@
 # pcxray
 
 [![CI](https://github.com/xingaorpw/pcxray/actions/workflows/ci.yml/badge.svg)](https://github.com/xingaorpw/pcxray/actions/workflows/ci.yml)
-[![tests](https://img.shields.io/badge/tests-418%20passed-brightgreen)](https://github.com/xingaorpw/pcxray/tree/main/tests)
+[![tests](https://img.shields.io/badge/tests-427%20passed-brightgreen)](https://github.com/xingaorpw/pcxray/tree/main/tests)
 [![python](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/downloads/)
 [![deps](https://img.shields.io/badge/dependencies-0-brightgreen)](https://github.com/xingaorpw/pcxray/blob/main/pyproject.toml)
 [![license](https://img.shields.io/badge/license-MIT-blue)](https://github.com/xingaorpw/pcxray/blob/main/LICENSE)
@@ -231,6 +231,17 @@ python -m pcxray off 名字 --force       # 允许改服务（默认只给建议
 
 `--kind` 只认 `run` / `run32` / `runonce` / `folder` / `task` / `service`，`--include` 只认 `registry` / `folders` / `tasks` / `services`。**写错会当场报错退出**，不会静默给你一份「这一类没有条目」的空报告。
 
+### 清掉旧备份
+
+每改一次自启项都会存一份备份，久了会攒出几百份。只留最近 20 份：
+
+```bash
+pcxray prune --dry-run     # 先看要删哪些
+pcxray prune --keep 20     # 真删
+```
+
+只删 `~/.pcxray/backup` 里的 `.json`，`--keep` 小于 1 会直接拒绝（全删等于放弃反悔的机会）。
+
 ## 它不会做什么
 
 - **不删你的东西。** 关自启写的是 Windows 自己的开关，不删注册表值。
@@ -261,7 +272,7 @@ python -m pcxray off 名字 --force       # 允许改服务（默认只给建议
 ## 开发
 
 ```bash
-python -m unittest discover -s tests -t .     # 418 个测试
+python -m unittest discover -s tests -t .     # 427 个测试
 ```
 
 测试分两类：不依赖 Windows 的逻辑（命令行解析、开关状态解码、内存分组、表格排版、网页接口）在 Linux 上也能跑；真正读写注册表的端到端测试只在 Windows 上跑（`skipUnless`）。CI 两边都跑。
