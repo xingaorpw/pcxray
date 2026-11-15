@@ -105,7 +105,7 @@ class Report:
         self.items: list[Item] = []
         self.problems: list[str] = []
         self.groups: list[procs.Group] = []
-        self.background: list[winapi.Process] = []
+        self.background: list[procs.Group] = []
         self.admin = False
         self.logon = 0.0
         self.boot = 0.0
@@ -175,13 +175,13 @@ class Report:
             },
             "background": [
                 {
-                    "pid": p.pid,
-                    "name": p.name,
-                    "mb": round(p.mb, 1),
-                    "path": p.path,
-                    "started": p.started,
+                    "name": g.name,
+                    "count": len(g.pids),
+                    "mb": round(g.mb, 1),
+                    "path": g.paths[0] if g.paths else "",
+                    "started": g.started,
                 }
-                for p in self.background
+                for g in self.background
             ],
             "groups": [g.as_dict() for g in self.groups],
             "problems": self.problems,
@@ -233,7 +233,9 @@ def build(
     report.boot = winapi.boot_time()
     report.total_ram, report.avail_ram = winapi.memory_status()
     report.groups = procs.group(process_list)
-    report.background = procs.background_heavy(process_list)
+    # 后台那一块按程序合并：同一个程序开 6 个进程时，用户要看的是「它一共占
+    # 多少」，不是 6 行同名条目（第一版就是这样，看起来像重复 bug）。
+    report.background = procs.group(procs.background_heavy(process_list))
     report.items = [_annotate(e, process_list, report.admin) for e in entries]
     # 同一批进程可能被多个条目认领（两条 Edge 自启项都指向 msedge.exe）。
     # 头部合计按 PID 去重，行里的数字是「这个程序一共占多少」，所以行的和
@@ -396,22 +398,23 @@ def render(report: Report, limit: int = 0, only: str = "") -> list[str]:
     if report.background:
         lines.append("  后台占内存（没有可见窗口，超过 100 MB）")
         rows = []
-        for proc in report.background[:15]:
+        for group in report.background[:15]:
             rows.append(
                 [
-                    proc.name,
-                    text.mb(proc.mb),
-                    procs.describe_started(proc.started, report.logon),
-                    proc.path or "读不到路径",
+                    group.name,
+                    str(len(group.pids)),
+                    text.mb(group.mb),
+                    procs.describe_started(group.started, report.logon),
+                    group.paths[0] if group.paths else "读不到路径",
                 ]
             )
         lines.extend(
             "  " + line
             for line in text.table(
-                ["程序", "内存", "启动", "路径"],
+                ["程序", "进程", "内存", "启动", "路径"],
                 rows,
-                ["left", "right", "left", "left"],
-                limits=[28, 10, 18, 44],
+                ["left", "right", "right", "left", "left"],
+                limits=[26, 5, 9, 18, 40],
             )
         )
 

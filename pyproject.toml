@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pcxray"
-version = "0.1.0"
+version = "0.2.0"
 description = "查清开机时谁自己启动、后台谁在占内存，还能一条条关掉并随时还原"
 readme = "README.md"
 requires-python = ">=3.9"

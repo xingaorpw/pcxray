@@ -1,7 +1,7 @@
 # pcxray
 
 [![CI](https://github.com/xingaorpw/pcxray/actions/workflows/ci.yml/badge.svg)](https://github.com/xingaorpw/pcxray/actions/workflows/ci.yml)
-[![tests](https://img.shields.io/badge/tests-219%20passed-brightgreen)](https://github.com/xingaorpw/pcxray/tree/main/tests)
+[![tests](https://img.shields.io/badge/tests-306%20passed-brightgreen)](https://github.com/xingaorpw/pcxray/tree/main/tests)
 [![python](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/downloads/)
 [![deps](https://img.shields.io/badge/dependencies-0-brightgreen)](https://github.com/xingaorpw/pcxray/blob/main/pyproject.toml)
 [![license](https://img.shields.io/badge/license-MIT-blue)](https://github.com/xingaorpw/pcxray/blob/main/LICENSE)
@@ -51,39 +51,56 @@ python -m pcxray list
 真实输出（这台机器，183 条自启）：
 
 ```text
-  pcxray · 2026-11-14 22:44:30
+  pcxray · 2026-11-15 02:30:53
 
-  内存 13.9 GB  已用 11.0 GB  可用 2.9 GB
+  内存 13.9 GB  已用 12.9 GB  可用 1013 MB
   开机 11-11 03:54　登录 11-11 09:30
-  进程 372 个　自启 183 条（启用 169）
-  自启项现在占着 367 MB（按进程去重；登录后 90 秒内起来的 51 个进程共 686 MB）
+  进程 378 个　自启 183 条（启用 169）
+  自启项现在占着 542 MB（同一个进程只算一次；行里的数字是各自程序的全部内存）
+  登录后 90 秒内起来的 51 个进程共 838 MB
 
   开机自启（注册表 + 启动文件夹）
   状态    名称                                            来源          发行商              备注
-  ──────  ──────────────────────────────────────────────  ────────────  ──────────────────  ────────────────
-  启用    ClashVerge                                      用户 Run      Clash Verge Rev     不显窗 占27 MB
-  启用    ctfmon                                          用户 Run      Microsoft Corpora…  占34 MB
+  ──────  ──────────────────────────────────────────────  ────────────  ──────────────────  ────────────────────
+  启用    360huabao                                       用户 Run      —                   不显窗
+  启用    ClashVerge                                      用户 Run      Clash Verge Rev     不显窗 占33 MB
+  启用    com.electron                                    用户 Run      上海阅文信息技术…
+  启用    ctfmon                                          用户 Run      Microsoft Corpora…  占28 MB
   启用    electron.app.Notion                             用户 Run      Notion Labs, Inc    不显窗
-  启用    MicrosoftEdgeAutoLaunch_29EBC4579851B72EE312C…  用户 Run      Microsoft Corpora…  不显窗 占234 MB
-  启用    OneDrive                                        用户 Run      Microsoft Corpora…  不显窗 占14 MB
+  启用    EpicGamesLauncher                               用户 Run      Epic Games, Inc.    不显窗
+  启用    Gemini                                          用户 Run      Google LLC
+  启用    GoogleUpdaterTaskUser159.0.8140.0               用户 Run      Google LLC          不显窗
+  启用    MicrosoftEdgeAutoLaunch_29EBC4579851B72EE312C…  用户 Run      Microsoft Corpora…  不显窗 占411 MB ×2条
+  启用    MicrosoftEdgeAutoLaunch_A96907E98764DBDE45606…  用户 Run      Microsoft Corpora…  不显窗 占411 MB ×2条
+  启用    OneDrive                                        用户 Run      Microsoft Corpora…  不显窗 占22 MB
+  启用    quark                                           用户 Run      The Quark Authors   不显窗
   启用    QuarkUpdaterTaskUser1.0.0.21                    用户 Run      —                   !文件没了 不显窗
-  启用    RtkAudUService                                  所有用户 Run  Realtek Semicondu…  占8 MB
+  启用    RtkAudUService                                  所有用户 Run  Realtek Semicondu…  占3 MB ×2条
   启用    想家云(server端).lnk                            用户启动夹    联想(北京)有限公司
+  启用    Delete Cached Standalone Update Binary          RunOnce       Microsoft Corpora…
+  启用    Delete Cached Update Binary                     RunOnce       Microsoft Corpora…
+  启用    Uninstall 26.198.1011.0006                      RunOnce       Microsoft Corpora…
+  启用    msedge_cleanup_{56EB18F8-B008-4CBD-B6D2-8C97F…  RunOnce       Microsoft Corpora…
+  启用    msedge_cleanup_{C50565E9-CCCF-44B4-BA15-5AC5C…  RunOnce       Microsoft Corpora…
+  启用    msedge_cleanup_{F3017226-FE2A-4295-8BDF-00C3A…  RunOnce       Microsoft Corpora…
   已禁用  LVAPRCU                                         所有用户 Run  Lenovo Limited Co…
-  已禁用  SecurityHealth                                  所有用户 Run  Microsoft Corpora…  占408 KB
+  已禁用  SecurityHealth                                  所有用户 Run  Microsoft Corpora…  占3 MB
 
   还有：计划任务 46 条（启用 34）　自动服务 114 条（启用 114）
   　用 pcxray list --kind task / --kind service 看明细
 
   后台占内存（没有可见窗口，超过 100 MB）
-  程序                    内存  启动          路径
-  ────────────────────  ──────  ────────────  ────────────────────────────────────────────
-  MsMpEng.exe           214 MB  启动时间未知  读不到路径
-  WorkBuddy.exe         210 MB  19:37 启动    C:\Users\admin\AppData\Local\Programs\WorkB…
-  LenovoPcManager.exe   148 MB  07:31 启动    C:\Program Files (x86)\Lenovo\PCManager\5.1…
-  GlobalPresenter.exe   103 MB  09:32 启动    C:\Program Files\WindowsApps\E046963F.Lenov…
+  程序                  进程    内存  启动              路径
+  ────────────────────  ────  ──────  ────────────────  ────────────────────────────────────────
+  DeepSeek Harness.exe     3  5.2 GB  10:07 启动        C:\Users\admin\AppData\Local\Programs\D…
+  WorkBuddy.exe            3  473 MB  19:37 启动        C:\Users\admin\AppData\Local\Programs\W…
+  MsMpEng.exe              1  278 MB  启动时间未知      读不到路径
+  Grok Bot.exe             2  269 MB  02:05 启动        C:\Users\admin\AppData\Local\Programs\G…
+  LenovoPcManager.exe      1  148 MB  07:31 启动        C:\Program Files (x86)\Lenovo\PCManager…
+  msedgewebview2.exe       1  111 MB  09:31 随登录启动  C:\Program Files (x86)\Microsoft\EdgeWe…
+  GlobalPresenter.exe      1  102 MB  09:32 启动        C:\Program Files\WindowsApps\E046963F.L…
 
-  · 不是管理员：179 个进程读不到路径和启动时间。要完整信息用 pcxray list --elevate
+  · 不是管理员：175 个进程读不到路径和启动时间。要完整信息用 pcxray list --elevate
 ```
 
 几个字段的意思：
@@ -95,6 +112,9 @@ python -m pcxray list
 | 不显窗 | 启动时带 `--silent`、`/background`、`--no-startup-window` 这类参数 |
 | !文件没了 | 指向的 exe 已经不在了 —— 装完又删掉的残留，关掉它没有任何损失 |
 | 占 X MB | 这一条现在实际拉起来的进程占了多少内存 |
+| ×N条 | 有 N 条自启项指向同一个程序。这时每行都显示这个程序的全部内存，所以**行加起来会比顶部合计大** —— 顶部那个数是按进程去重后的真实占用 |
+
+上面那两条 `MicrosoftEdgeAutoLaunch_…` 就是这种情况：同一个 `msedge.exe` 被两条自启项指着，各显示 411 MB，而顶部合计只算一次。这类重复项本身就该关掉一条。
 
 ### 看谁在占内存
 
@@ -103,20 +123,22 @@ python -m pcxray ram
 ```
 
 ```text
-  内存 13.9 GB　可用 2.9 GB　进程 372 个
+  内存 13.9 GB　可用 1022 MB　进程 378 个
 
   程序                  进程数    占用    提交  窗口  启动
   ────────────────────  ──────  ──────  ──────  ────  ────────────────
-  DeepSeek Harness.exe       6  4.6 GB  9.1 GB  有    10:07 启动
-  svchost.exe              101  670 MB  782 MB  无    09:30 登录前启动
-  WorkBuddy.exe              8  580 MB  1.4 GB  无    19:37 启动
-  Memory Compression         1  527 MB    7 MB  无    启动时间未知
-  msedge.exe                19  234 MB  1.6 GB  有    03:21 启动
-  msedgewebview2.exe        13  218 MB  637 MB  无    09:30 随登录启动
-  explorer.exe               1  166 MB  503 MB  有    09:30 随登录启动
+  DeepSeek Harness.exe       6  5.4 GB  9.8 GB  有    10:07 启动
+  svchost.exe              100  740 MB  779 MB  无    09:30 登录前启动
+  Memory Compression         1  736 MB    7 MB  无    启动时间未知
+  Grok Bot.exe               9  665 MB  831 MB  有    02:05 启动
+  WorkBuddy.exe              8  598 MB  1.4 GB  无    19:37 启动
+  msedge.exe                19  411 MB  1.6 GB  有    03:21 启动
+  msedgewebview2.exe        13  327 MB  641 MB  无    09:30 随登录启动
+  MsMpEng.exe                1  280 MB  496 MB  无    启动时间未知
 
   「占用」= 工作集，和任务管理器那一列一致
   「提交」= 已申请的内存，含被换到页面文件的部分，可能比占用大好几倍
+  · 不是管理员：部分系统进程的路径和启动时间读不到，内存数字不受影响
 ```
 
 **「提交」比「占用」大好几倍是正常的**，不是 bug。占用是真正在物理内存里的部分，提交是程序已经申请的全部内存（含被换到页面文件的部分）。
@@ -125,17 +147,24 @@ python -m pcxray ram
 
 ```bash
 # 先看它要做什么，不改任何东西
-python -m pcxray off ClashVerge --dry-run
+python -m pcxray off pcxray_demo --dry-run
 
 # 真的关掉
-python -m pcxray off ClashVerge
+python -m pcxray off pcxray_demo
+```
+
+真实输出（拿一条自己建的测试项 `pcxray_demo` 演示，跑完就删掉了）：
+
+```text
+  ✓ pcxray_demo　（演练）将要禁用（写 Run 开关）
 ```
 
 ```text
-  ✓ ClashVerge　已写入开关标记
+  ✓ pcxray_demo　已写入开关标记
 
-  备份已写入：C:\Users\admin\.pcxray\backup\20261114-224350.json
-  反悔就运行：pcxray restore "C:\Users\admin\.pcxray\backup\20261114-224350.json"
+
+  备份已写入：C:\Users\admin\.pcxray\backup\20261115-023116.json
+  反悔就运行：pcxray restore "C:\Users\admin\.pcxray\backup\20261115-023116.json"
 
   重启后生效。想立刻确认这一条还会不会启动，用 --mode move 再关一次。
 ```
@@ -181,10 +210,13 @@ python -m pcxray web
 ```bash
 python -m pcxray list --kind task       # 只看计划任务
 python -m pcxray list --kind service    # 只看服务
-python -m pcxray list --json            # 给脚本用
+python -m pcxray list --json            # 给脚本用（--kind / --limit 一样生效）
 python -m pcxray list --elevate         # 以管理员身份重开（能多看到一批进程信息）
+python -m pcxray backups --all          # 列出全部备份（默认只给最近 10 份）
 python -m pcxray off 名字 --force       # 允许改服务（默认只给建议）
 ```
+
+`--kind` 只认 `run` / `run32` / `runonce` / `folder` / `task` / `service`，`--include` 只认 `registry` / `folders` / `tasks` / `services`。**写错会当场报错退出**，不会静默给你一份「这一类没有条目」的空报告。
 
 ## 它不会做什么
 
@@ -209,11 +241,14 @@ python -m pcxray off 名字 --force       # 允许改服务（默认只给建议
 9. **同名进程合并显示。** 两个不同目录下同名的 exe 会被算成一行。实际很少见，但确实会。
 10. **不能看到自启项「上次启动用了多久」。** 那需要读事件日志，没做。
 11. **控制台代码页会被改成 UTF-8。** 不切的话英文 Windows 上打中文会直接 `UnicodeEncodeError` 崩溃（CI 上真崩过一次）。改了之后中文能正常显示，代价是同一个窗口里后续别的命令也按 UTF-8 解释。
+12. **同一个程序被多条自启项指向时，表格里会出现多行。** 每行都显示这个程序的全部内存（备注列标 `×N条`），顶部合计按进程去重。这不是算错了，是「一个程序、多个入口」的事实 —— 本机就有两条 Edge 自启项指向同一个 `msedge.exe`，各显示 411 MB，而真实占用是 411 MB 不是 822 MB。
+13. **计划任务和服务改完会立刻读回状态确认。** 读回来对不上就报失败。但如果任务被组策略锁定、或者服务需要管理员权限，改不动就是改不动，会明确报错而不是假装成功。
+14. **`backups` 默认只列最近 10 份。** 攒到几百份时一次全打印既没法看也没法用，`--all` 才给全部。
 
 ## 开发
 
 ```bash
-python -m unittest discover -s tests -t .     # 219 个测试
+python -m unittest discover -s tests -t .     # 306 个测试
 ```
 
 测试分两类：不依赖 Windows 的逻辑（命令行解析、开关状态解码、内存分组、表格排版、网页接口）在 Linux 上也能跑；真正读写注册表的端到端测试只在 Windows 上跑（`skipUnless`）。CI 两边都跑。

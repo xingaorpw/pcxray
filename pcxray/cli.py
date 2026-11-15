@@ -267,8 +267,12 @@ def _cmd_backups(args) -> int:
     if not backups:
         print("  还没有任何备份（说明你还没改过东西）")
         return 0
-    for path in backups:
+    shown = backups if args.all else backups[:10]
+    for path in shown:
         print(f"  {path}")
+    if len(backups) > len(shown):
+        # 一次打印三百行没人看得完，也没法用。默认只给最近的 10 份。
+        print(f"  …… 还有 {len(backups) - len(shown)} 份更早的，用 pcxray backups --all 看全部")
     return 0
 
 
@@ -332,6 +336,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_restore.set_defaults(func=_cmd_restore)
 
     p_backups = sub.add_parser("backups", help="列出备份")
+    p_backups.add_argument("--all", action="store_true", help="列出全部（默认只给最近 10 份）")
     p_backups.set_defaults(func=_cmd_backups)
 
     p_web = sub.add_parser("web", help="打开本地界面")

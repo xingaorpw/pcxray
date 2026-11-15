@@ -176,6 +176,47 @@ class TestJsonFiltering(unittest.TestCase):
         self.assertEqual(data["autostart"]["items"], [])
 
 
+class TestBackgroundGrouping(unittest.TestCase):
+    """「后台占内存」必须按程序合并。
+
+    第一版直接列进程，同一个程序开 6 个进程就出 6 行同名条目 —— 看起来像重复
+    bug，而且用户真正想知道的是「它一共占多少」。
+    """
+
+    def test_same_program_appears_once_with_a_count(self):
+        processes = [
+            fake_proc(1, r"C:\x\bg.exe", 300.0),
+            fake_proc(2, r"C:\x\bg.exe", 200.0),
+        ]
+        # 默认 Windows() 就是没有可见窗口
+        rep = build([], processes)
+        self.assertEqual(len(rep.background), 1)
+        self.assertEqual(rep.background[0].name, "bg.exe")
+        self.assertEqual(len(rep.background[0].pids), 2)
+        self.assertAlmostEqual(rep.background[0].mb, 500.0, places=1)
+
+    def test_json_has_count_not_pid(self):
+        rep = build([], [fake_proc(1, r"C:\x\bg.exe", 300.0)])
+        data = rep.as_dict()["background"][0]
+        self.assertEqual(data["count"], 1)
+        self.assertNotIn("pid", data)
+        self.assertAlmostEqual(data["mb"], 300.0, places=1)
+
+    def test_small_processes_are_filtered_out(self):
+        rep = build([], [fake_proc(1, r"C:\x\small.exe", 5.0)])
+        self.assertEqual(rep.background, [])
+
+    def test_system_hosts_are_not_listed_as_background_hogs(self):
+        rep = build([], [fake_proc(1, r"C:\Windows\System32\svchost.exe", 400.0)])
+        self.assertEqual(rep.background, [])
+
+    def test_visible_window_excludes_a_process(self):
+        proc = fake_proc(1, r"C:\x\fg.exe", 400.0)
+        proc.windows = winapi.Windows(total=1, visible=1)
+        rep = build([], [proc])
+        self.assertEqual(rep.background, [])
+
+
 class TestGroupCoverage(unittest.TestCase):
     def test_every_process_lands_in_exactly_one_group(self):
         procs_list = [

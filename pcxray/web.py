@@ -170,7 +170,8 @@ function draw(){
     b.onclick=()=>toggle(b.dataset.key, b.dataset.on==="1", b.dataset.nf==="1");
   });
   const bg=DATA.background.slice(0,10).map(p=>
-    `<tr><td>${esc(p.name)}</td><td>${mb(p.mb)}</td>
+    `<tr><td>${esc(p.name)}${p.count>1?` <span class="tag">${p.count} 个进程</span>`:""}</td>
+     <td>${mb(p.mb)}</td>
      <td class="mono">${esc(p.path||"读不到路径")}</td></tr>`).join("");
   document.getElementById("foot").innerHTML=
     `<h3 style="font-size:14px;margin:26px 0 10px">后台占内存（没有可见窗口，前 10）</h3>`+

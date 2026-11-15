@@ -14,7 +14,9 @@ import datetime
 import os
 import subprocess
 import sys
+import tempfile
 import unittest
+from unittest import mock
 
 from pcxray import actions, autostart, safety, winapi
 
@@ -30,6 +32,13 @@ class TestRegistryRoundTrip(unittest.TestCase):
         import winreg
 
         self.winreg = winreg
+        # 测试不许往用户真实的 ~/.pcxray/backup 里塞文件。以前就是这么干的，
+        # 跑一遍测试就在人家目录里留下十几份备份。
+        self._backup_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._backup_dir.cleanup)
+        patcher = mock.patch.object(actions, "BACKUP_DIR", self._backup_dir.name)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         # 先确保干净：万一上次跑崩了留下了残留
         self._delete_value(RUN_KEY, TEST_NAME)
         self._delete_value(APPROVED_KEY, TEST_NAME)
@@ -236,6 +245,11 @@ class TestScheduledTaskRoundTrip(unittest.TestCase):
     NAME = "pcxray_selftest_task"
 
     def setUp(self):
+        self._backup_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._backup_dir.cleanup)
+        patcher = mock.patch.object(actions, "BACKUP_DIR", self._backup_dir.name)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         if not self._schtasks_available():
             self.skipTest("没有 schtasks")
         self._delete()
