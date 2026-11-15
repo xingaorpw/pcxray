@@ -25,6 +25,9 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **22 个登录/开机任务的「程序」一栏是空的，一句话都不说。** 46 个任务里有 22 个
+  的 Actions 是空的 —— 它们靠 COM 处理器启动，不跑命令行。空白的程序一栏看起来像
+  「这个任务什么都不干」，恰恰相反。现在备注写「没有命令行，靠 COM 启动」。
 - **`autostart.scan(("service",))` 传错名字会安静地返回 0 条。** 空列表和「没扫」
   看起来一模一样，调用方会以为这一类真的没有东西。现在把不认识的来源写进
   `problems` 报出来。

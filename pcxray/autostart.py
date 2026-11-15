@@ -479,6 +479,12 @@ def scan_tasks() -> tuple[list[Entry], str]:
                 enabled=state != 1,
                 detail=f"{path}{name}",
                 triggers=readable,
+                # 46 个登录/开机任务里有 22 个的 Actions 是空的 —— 它们靠 COM
+                # 处理器启动，不跑命令行。不说清楚的话，空白的「程序」一栏看起来
+                # 像「这个任务什么都不干」，恰恰相反。
+                caveat=""
+                if (exe + args).strip()
+                else "没有命令行，靠 COM 启动",
                 protected=path.lower().startswith("\\microsoft\\windows\\"),
                 locator={"path": path, "name": name},
             )

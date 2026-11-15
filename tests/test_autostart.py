@@ -119,6 +119,34 @@ class TestSplitExe(unittest.TestCase):
             del os.environ["PCXRAY_DIR"]
 
 
+class TestComHandlerTaskCaveat(unittest.TestCase):
+    """46 个登录/开机任务里有 22 个没有命令行 —— 它们靠 COM 处理器启动。
+
+    空白的「程序」一栏看起来像「这个任务什么都不干」，恰恰相反。
+    """
+
+    ROWS = [
+        {"Name": "NoExe", "Path": "\\Custom\\", "State": 3, "Triggers": "Logon",
+         "Exe": "", "Args": ""},
+        {"Name": "WithExe", "Path": "\\Custom\\", "State": 3, "Triggers": "Logon",
+         "Exe": r"C:\Windows\notepad.exe", "Args": ""},
+    ]
+
+    def test_task_without_execute_gets_a_caveat(self):
+        with mock.patch.object(autostart.pwsh, "run_json", return_value=(True, self.ROWS, "")):
+            entries, _reason = autostart.scan_tasks()
+        by_name = {e.name: e for e in entries}
+        self.assertIn("COM", by_name["NoExe"].caveat)
+        self.assertEqual(by_name["WithExe"].caveat, "")
+
+    def test_caveat_fits_the_table_column(self):
+        # 备注列放不下会被截成「没有命令行（靠 COM …」，最要紧的后半句就没了
+        with mock.patch.object(autostart.pwsh, "run_json", return_value=(True, self.ROWS, "")):
+            entries, _reason = autostart.scan_tasks()
+        caveat = next(e for e in entries if e.name == "NoExe").caveat
+        self.assertLessEqual(len(caveat), 16, "再长就会被截断，换个短说法")
+
+
 class TestUnknownIncludeIsReported(unittest.TestCase):
     """传错来源名（比如单数 `service`）以前会安安静静返回 0 条。
 
