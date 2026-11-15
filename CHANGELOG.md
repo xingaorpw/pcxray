@@ -25,6 +25,11 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **启动文件夹和 .lnk 解析的边界没测过。** 文件夹不存在、读不了（拒绝访问）、
+  里面放的是 `.bat` 而不是快捷方式、`.lnk` 解不出目标、PowerShell 解链接超时 ——
+  这些以前都没测。尤其是「里面放的不是 .lnk」：那种文件会被 Windows 直接启动，
+  以前没有测试保证它会被列出来。另外 `-pcxray-disabled` 键里出现非字符串值时，
+  以前只是跳过，现在报「不是字符串」。
 - **`serve()` 和 POST 请求体的三道闸没测过。** `pcxray web` 是用户真正跑的那条路，
   以前只有「起个服务器发请求」的集成测试碰它；起不来端口、Ctrl+C、崩了这三种情况
   下「服务器关没关」没人验过 —— 不关的话端口会一直被占着。POST 请求体的三道闸

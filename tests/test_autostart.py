@@ -119,6 +119,71 @@ class TestSplitExe(unittest.TestCase):
             del os.environ["PCXRAY_DIR"]
 
 
+class TestFolderScanEdges(unittest.TestCase):
+    """启动文件夹和 .lnk 解析的边界。"""
+
+    def test_resolve_links_with_no_paths_does_not_call_powershell(self):
+        with mock.patch.object(autostart.pwsh, "run_json") as run:
+            self.assertEqual(autostart._resolve_links([]), {})
+        run.assert_not_called()
+
+    def test_resolve_links_failure_returns_empty_dict(self):
+        # 解不出目标不是错误，整个启动文件夹照常列出来
+        with mock.patch.object(autostart.pwsh, "run_json", return_value=(False, None, "超时")):
+            self.assertEqual(autostart._resolve_links([r"C:\a.lnk"]), {})
+
+    def test_resolve_links_skips_non_dict_rows(self):
+        with mock.patch.object(
+            autostart.pwsh, "run_json", return_value=(True, ["垃圾", {"Path": "C:\\A.LNK", "Target": "C:\\a.exe"}], "")
+        ):
+            got = autostart._resolve_links([r"C:\a.lnk"])
+        self.assertEqual(got, {r"c:\a.lnk": (r"C:\a.exe", "")})
+
+    def test_missing_startup_folder_is_skipped(self):
+        with mock.patch.object(
+            autostart, "_startup_dirs", return_value=[("user", r"Z:\不存在的目录", "用户启动夹")]
+        ):
+            self.assertEqual(autostart.scan_folders(), [])
+
+    def test_unreadable_startup_folder_is_skipped(self):
+        with mock.patch.object(
+            autostart, "_startup_dirs", return_value=[("user", r"Z:\x", "用户启动夹")]
+        ), mock.patch.object(autostart.os.path, "isdir", return_value=True), mock.patch.object(
+            autostart.os, "listdir", side_effect=PermissionError("拒绝访问")
+        ):
+            self.assertEqual(autostart.scan_folders(), [])
+
+    def test_plain_file_in_startup_folder_is_listed(self):
+        # 启动文件夹里不只有 .lnk，.bat / .exe 也会被直接启动
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, "run.bat"), "w", encoding="utf-8") as handle:
+                handle.write("echo hi")
+            with mock.patch.object(
+                autostart, "_startup_dirs", return_value=[("user", tmp, "用户启动夹")]
+            ), mock.patch.object(autostart, "approved_state", return_value="enabled"):
+                entries = autostart.scan_folders()
+        self.assertEqual(len(entries), 1)
+        self.assertTrue(entries[0].command.endswith("run.bat"), entries[0].command)
+        self.assertEqual(entries[0].exe, entries[0].command)
+
+
+class TestDisabledKeyNonStringValue(unittest.TestCase):
+    """被挪到 -pcxray-disabled 的键里如果有非字符串值，要报出来而不是悄悄跳过。"""
+
+    def test_non_string_value_is_reported(self):
+        def fake_read(hive, subkey):
+            if subkey.endswith(autostart.DISABLED_SUFFIX):
+                return [("X", 123, 4)]
+            return []
+
+        problems: list[str] = []
+        with mock.patch.object(autostart, "_read_values", side_effect=fake_read):
+            autostart.scan_registry(problems)
+        # 每个注册表位置都会报一条（HKCU/HKLM 的 Run、Run32、RunOnce…）
+        self.assertTrue(problems, "非字符串值必须报出来，不能悄悄跳过")
+        self.assertTrue(all("不是字符串" in p for p in problems), problems)
+
+
 class TestComHandlerTaskCaveat(unittest.TestCase):
     """46 个登录/开机任务里有 22 个没有命令行 —— 它们靠 COM 处理器启动。
 
