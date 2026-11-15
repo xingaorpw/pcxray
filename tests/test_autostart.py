@@ -119,6 +119,38 @@ class TestSplitExe(unittest.TestCase):
             del os.environ["PCXRAY_DIR"]
 
 
+class TestLegacyMoveLeftovers(unittest.TestCase):
+    """旧版 `--mode move` 在同一个键里把值改名成 `~pcxray~原名`。
+
+    那拦不住启动（Run 里每个值 Windows 都会执行），所以这种条目其实一直开着。
+    名字骗人，状态不能跟着骗 —— 报「启用」并说清楚怎么处理。
+    """
+
+    def _scan(self, values):
+        def fake_read(_hive, subkey):
+            if subkey.endswith(autostart.DISABLED_SUFFIX):
+                return []
+            return values
+
+        with mock.patch.object(
+            autostart, "RUN_KEYS", (("HKCU", r"Software\Microsoft\Windows\CurrentVersion\Run", "user", "run", "用户 Run"),)
+        ), mock.patch.object(autostart, "_read_values", side_effect=fake_read), mock.patch.object(
+            autostart, "approved_state", return_value=None
+        ):
+            return autostart.scan_registry()
+
+    def test_legacy_name_is_reported_as_still_enabled(self):
+        entries = self._scan([("~pcxray~旧条目", r"C:\x\old.exe", 1)])
+        self.assertEqual(len(entries), 1)
+        self.assertTrue(entries[0].enabled, "值还在 Run 里，Windows 就会启动它")
+        self.assertIn("旧版 --mode move", entries[0].caveat)
+        self.assertIn("一直开着", entries[0].caveat)
+
+    def test_normal_name_gets_no_such_caveat(self):
+        entries = self._scan([("正常条目", r"C:\x\a.exe", 1)])
+        self.assertEqual(entries[0].caveat, "")
+
+
 class TestEntry(unittest.TestCase):
     def test_key_is_stable_and_unique(self):
         a = autostart.Entry(name="OneDrive", kind="run", source="s", scope="user")

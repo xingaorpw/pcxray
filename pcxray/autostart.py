@@ -254,6 +254,10 @@ def approved_state(hive_name: str, kind: str, name: str) -> bool | None:
 # 只有 RunOnce 的 `!`、`*` 前缀有特殊含义）。挪到 Windows 不读的键里才真的不启动。
 DISABLED_SUFFIX = "-pcxray-disabled"
 
+# 老版本的 `--mode move` 在同一个键里把值改名成 `~pcxray~原名`。那拦不住启动
+# （见上），但改名留下的痕迹还在用户机器上，要能认出来并说清楚。
+LEGACY_MOVE_PREFIX = "~pcxray~"
+
 
 def scan_registry(problems: list[str] | None = None) -> list[Entry]:
     """注册表 Run / RunOnce 全部条目。
@@ -285,6 +289,14 @@ def scan_registry(problems: list[str] | None = None) -> list[Entry]:
                 caveat = "只运行一次，禁用意义不大"
             if not command.strip():
                 caveat = (caveat + "　" if caveat else "") + "值是空的，启动不了任何东西"
+            if name.startswith(LEGACY_MOVE_PREFIX):
+                # 旧版 --mode move 改过名：名字变了，值还在 Run 里，照样会启动。
+                # 状态就报「启用」，别顺着名字骗人。
+                caveat = (caveat + "　" if caveat else "") + (
+                    f"名字前面的 {LEGACY_MOVE_PREFIX} 是旧版 --mode move 加的；"
+                    "Run 里的值不管叫什么都会启动，所以它其实一直开着。"
+                    "用 pcxray off 重新关一次（这次会挪到别的键）"
+                )
             out.append(
                 Entry(
                     name=name,

@@ -361,6 +361,56 @@ class TestFolderItemInMoveMode(unittest.TestCase):
         self.assertIn("StartupApproved", plan["subkey"])
 
 
+class TestRestoreOldStyleMoveBackup(unittest.TestCase):
+    """老备份里的 move 记的是「同一个键里改名」（没有 target_subkey）。
+
+    本机上真的存在 52 份这样的备份 —— 旧版 --mode move 写出来的。还原要能处理。
+    """
+
+    def setUp(self):
+        self._dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._dir.cleanup)
+        patcher = mock.patch.object(actions, "BACKUP_DIR", self._dir.name)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_old_backup_renames_back_in_the_same_key(self):
+        path = os.path.join(self._dir.name, "old.json")
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(
+                {
+                    "version": 1,
+                    "ops": [
+                        {
+                            "kind": "move",
+                            "name": "旧条目",
+                            "hive": "HKCU",
+                            "subkey": r"Software\Microsoft\Windows\CurrentVersion\Run",
+                            "old_name": "旧条目",
+                            "new_name": "~pcxray~旧条目",
+                            "value": r"C:\x\a.exe",
+                            "value_kind": 1,
+                            "existed": True,
+                        }
+                    ],
+                },
+                handle,
+            )
+        written = {}
+        with mock.patch.object(
+            actions, "_subkey_exists", return_value=True
+        ), mock.patch.object(
+            actions, "_delete_value"
+        ) as delete, mock.patch.object(
+            actions, "_write_value", side_effect=lambda *a: written.setdefault(a[1:3], a[3])
+        ), mock.patch.object(actions, "_read_value", side_effect=lambda h, k, v: (True, written.get((k, v), r"C:\x\a.exe"), 1)):
+            results, _ = actions.restore(path)
+        self.assertTrue(results[0].ok, results[0].message)
+        delete.assert_called_once()
+        self.assertEqual(delete.call_args[0][2], "~pcxray~旧条目", "要把改名后的那条删掉")
+        self.assertIn((r"Software\Microsoft\Windows\CurrentVersion\Run", "旧条目"), written)
+
+
 class TestMovedEntryInFlagMode(unittest.TestCase):
     """被 --mode move 挪走的条目，标记模式对它没有意义。
 
