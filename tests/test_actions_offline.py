@@ -259,5 +259,87 @@ class TestDescribe(unittest.TestCase):
         self.assertIn("自动", actions._describe({"kind": "service"}, True))
 
 
+class TestRestoreRejectsBadFiles(unittest.TestCase):
+    """备份坏了要报错，不能打 traceback，也不能一声不响地退出 0。
+
+    还原是「反悔」路径，用户手里那份 JSON 可能是手改的、写到一半断电的、
+    从别的机器拷来的。以前 `{"ops": "x"}` 抛 AttributeError，`{}` 返回空结果
+    并让命令行退出 0 —— 用户以为还原成功了。
+    """
+
+    def setUp(self):
+        self._dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._dir.cleanup)
+
+    def _write(self, text):
+        path = os.path.join(self._dir.name, "b.json")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        return path
+
+    def test_not_json(self):
+        results, _path = actions.restore(self._write("not json"))
+        self.assertFalse(results[0].ok)
+        self.assertIn("不是合法 JSON", results[0].message)
+
+    def test_missing_file(self):
+        results, _path = actions.restore(os.path.join(self._dir.name, "nope.json"))
+        self.assertFalse(results[0].ok)
+        self.assertIn("没有这个备份文件", results[0].message)
+
+    def test_ops_is_not_a_list(self):
+        results, _path = actions.restore(self._write('{"ops": "x"}'))
+        self.assertFalse(results[0].ok)
+        self.assertIn("结构不对", results[0].message)
+
+    def test_ops_contains_non_dict(self):
+        results, _path = actions.restore(self._write('{"ops": [1, 2]}'))
+        self.assertFalse(results[0].ok)
+        self.assertIn("结构不对", results[0].message)
+
+    def test_empty_backup_is_not_silent_success(self):
+        results, _path = actions.restore(self._write("{}"))
+        self.assertFalse(results[0].ok)
+        self.assertIn("没有任何要还原的东西", results[0].message)
+
+    def test_unknown_kind_is_reported(self):
+        results, _path = actions.restore(self._write('{"ops": [{"kind": "weird", "name": "x"}]}'))
+        self.assertFalse(results[0].ok)
+        self.assertIn("不认识", results[0].message)
+
+
+class TestRestoreDoesNotCreateRegistryKeys(unittest.TestCase):
+    """还原不能凭空在注册表里造位置。
+
+    备份里写着一个这台机器上不存在的路径时，以前 `_write_value` 会让 Windows
+    自动建键，然后报告「已还原开关标记」—— 用户的注册表里就多了一片没人认识的
+    位置，而且工具说一切正常。
+    """
+
+    def test_missing_subkey_is_refused(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "b.json")
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump(
+                    {
+                        "ops": [
+                            {
+                                "kind": "flag",
+                                "hive": "HKCU",
+                                "subkey": r"Software\No\Such\Place\At\All",
+                                "value_name": "x",
+                                "existed": True,
+                                "old": "020000000000000000000000",
+                                "name": "坏位置",
+                            }
+                        ]
+                    },
+                    handle,
+                )
+            results, _path = actions.restore(path)
+        self.assertFalse(results[0].ok)
+        self.assertIn("没有这个注册表位置", results[0].message)
+
+
 if __name__ == "__main__":
     unittest.main()

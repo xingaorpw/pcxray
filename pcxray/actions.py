@@ -83,7 +83,7 @@ def _approved_subkey(kind: str) -> str:
     """`StartupApproved` 里对应哪一栏。
 
     只对注册表 Run 和启动文件夹有意义 —— 计划任务和服务是另外的开关机制，
-    以前这里对它们也返回 `\\Run`，等于给了一个会写错地方的后门。现在直接抛错，
+    以前这里对它们也返回 `Run` 那一栏，等于给了一个会写错地方的后门。现在直接抛错，
     将来谁接错分支都会当场炸，而不是悄悄往 Run 栏里塞一条没用的记录。
     """
     if kind not in _APPROVED_KINDS:
@@ -94,6 +94,22 @@ def _approved_subkey(kind: str) -> str:
     if kind == "run32":
         return base + r"\Run32"
     return base + r"\Run"
+
+
+def _subkey_exists(hive: str, subkey: str) -> bool:
+    """这个注册表位置在不在。写值的时候 Windows 会自动建键，还原不能这么干。"""
+    import winreg
+
+    try:
+        root = _hive(hive)
+    except KeyError:
+        return False
+    try:
+        key = winreg.OpenKey(root, subkey, 0, winreg.KEY_READ)
+        key.Close()
+        return True
+    except OSError:
+        return False
 
 
 def _read_value(hive: str, subkey: str, name: str) -> tuple[bool, object, int]:
@@ -497,6 +513,13 @@ def restore(path: str = "", dry_run: bool = False) -> tuple[list[Result], str]:
     except json.JSONDecodeError:
         return [Result("（还原）", False, f"备份文件不是合法 JSON：{path}")], path
     ops = payload.get("ops") or []
+    # 备份文件可能是坏的：手改过、写到一半断电、从别的机器拷来的。以前这里
+    # 直接 `op.get(...)`，`{"ops": "x"}` 会抛 AttributeError 打出一屏 traceback；
+    # `{}` 更糟 —— 返回空结果，命令行一声不响地退出 0，用户以为还原成功了。
+    if not isinstance(ops, list) or any(not isinstance(op, dict) for op in ops):
+        return [Result("（还原）", False, f"备份文件的结构不对，没法还原：{path}")], path
+    if not ops:
+        return [Result("（还原）", False, f"这份备份里没有任何要还原的东西：{path}")], path
     results: list[Result] = []
     for op in ops:
         name = op.get("name", "?")
@@ -504,6 +527,14 @@ def restore(path: str = "", dry_run: bool = False) -> tuple[list[Result], str]:
             results.append(Result(name, True, "（演练）将还原"))
             continue
         try:
+            if op["kind"] in ("flag", "move") and not _subkey_exists(op.get("hive", ""), op.get("subkey", "")):
+                # 备份可能是从别的机器拷来的，或者那一片注册表已经被删了。
+                # 直接写下去 Windows 会**新建**这个键，然后我们报告「已还原」——
+                # 等于凭空在用户的注册表里造了一个位置。宁可报失败。
+                results.append(
+                    Result(name, False, f"这台机器上没有这个注册表位置：{op.get('subkey', '')}")
+                )
+                continue
             if op["kind"] == "flag":
                 hive, subkey = op["hive"], op["subkey"]
                 old_hex = op.get("old")

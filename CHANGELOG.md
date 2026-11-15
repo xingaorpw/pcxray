@@ -25,6 +25,13 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **还原会在注册表里凭空造位置。** 备份里的路径在这台机器上不存在时，
+  `_write_value` 会让 Windows 自动建键，然后报告「已还原开关标记」—— 用户的
+  注册表里多了一片没人认识的位置，工具还说一切正常。现在先查位置在不在，
+  不在就报失败。
+- **坏掉的备份文件会打 traceback，或者一声不响地「成功」。** `{"ops": "x"}`
+  抛 `AttributeError` 打出一屏 Python 栈；`{}` 返回空结果，命令行退出 0，用户
+  以为还原完成了。现在两种都给一句能看懂的话，并且返回非 0。
 - **截断不吭声。** `list --limit 3` 只给 3 行，不提还有 20 条，用户会以为
   「注册表里就 3 条自启」；`ram --limit 3` 同理。现在两个都会写「只显示了前 N 条，
   还有 M 条没显示」。
