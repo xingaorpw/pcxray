@@ -59,6 +59,19 @@ def resolve(entries: list[autostart.Entry], query: str) -> tuple[autostart.Entry
         return exact[0], []
     if len(exact) > 1:
         return None, exact
+    # 第四级：把空格、下划线、连字符、点都去掉再比一次。用户记名字的时候
+    # 不会记得 `clash_verge_service` 里那个下划线，敲 `clash verge` 就该能找到。
+    # 只在「去掉分隔符后完全相等」时命中，不做模糊，免得关错东西。
+    def squash(value: str) -> str:
+        return "".join(ch for ch in value.lower() if ch not in " _-.\t")
+
+    squashed = squash(query)
+    if squashed:
+        loose = [e for e in entries if squash(e.name) == squashed]
+        if len(loose) == 1:
+            return loose[0], []
+        if len(loose) > 1:
+            return None, loose
     partial = [e for e in entries if lowered in e.name.lower()]
     if len(partial) == 1:
         return partial[0], []

@@ -107,6 +107,8 @@
 
 ### 新增
 
+- 名字匹配忽略分隔符：`clash verge` 能找到 `ClashVerge`（只做「去掉空格/下划线/
+  连字符/点之后完全相等」，不做模糊 —— 关错东西的代价太大）
 - `pcxray backups --all`
 - `pwsh.run_text()`：改系统的动作按退出码判断成败，不要求 JSON 输出
 - `pwsh.ps_quote()`：PowerShell 单引号转义

@@ -128,6 +128,53 @@ class TestParser(unittest.TestCase):
         self.assertEqual(args.include, "registry,folders")
 
 
+class TestResolveIgnoresSeparators(unittest.TestCase):
+    """用户记不住名字里的下划线和空格，敲 `clash verge` 就该能找到
+    `ClashVerge`。
+
+    只在「去掉分隔符后完全相等」时命中，不做模糊 —— 关错东西的代价太大。
+    """
+
+    def setUp(self):
+        def entry(name, kind="run"):
+            return autostart.Entry(name=name, kind=kind, source="用户 Run", scope="user")
+
+        self.entries = [
+            entry("ClashVerge"),
+            entry("clash_verge_service", kind="service"),
+            entry("OneDrive"),
+            entry("MicrosoftEdgeAutoLaunch_A96907E98764DB"),
+        ]
+
+    def test_space_matches_underscoreless_name(self):
+        hit, _cands = cli.resolve(self.entries, "clash verge")
+        self.assertIsNotNone(hit)
+        self.assertEqual(hit.name, "ClashVerge")
+
+    def test_hyphen_and_dot_are_ignored_too(self):
+        hit, _cands = cli.resolve(self.entries, "one.drive")
+        self.assertIsNotNone(hit)
+        self.assertEqual(hit.name, "OneDrive")
+
+    def test_does_not_fuzzy_match_the_wrong_thing(self):
+        # 「clash verge」不该匹配到 clash_verge_service（那是个服务，关错代价大）
+        hit, _cands = cli.resolve(self.entries, "clash verge")
+        self.assertNotEqual(hit.kind if hit else None, "service")
+
+    def test_ambiguous_after_squashing_returns_candidates(self):
+        entries = self.entries + [
+            autostart.Entry(name="clash-verge", kind="run", source="用户 Run", scope="user")
+        ]
+        hit, cands = cli.resolve(entries, "clash verge")
+        self.assertIsNone(hit)
+        self.assertEqual(len(cands), 2)
+
+    def test_unknown_still_returns_nothing(self):
+        hit, cands = cli.resolve(self.entries, "绝对不存在")
+        self.assertIsNone(hit)
+        self.assertEqual(cands, [])
+
+
 class TestMixedNamesAreAllReported(unittest.TestCase):
     """名字里混了一个不存在的，必须两条都报出来。
 
