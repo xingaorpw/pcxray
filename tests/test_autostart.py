@@ -119,6 +119,28 @@ class TestSplitExe(unittest.TestCase):
             del os.environ["PCXRAY_DIR"]
 
 
+class TestUnknownIncludeIsReported(unittest.TestCase):
+    """传错来源名（比如单数 `service`）以前会安安静静返回 0 条。
+
+    调用方会以为「这一类真的没有东西」—— 空列表和「没扫」看起来一样。
+    """
+
+    def test_singular_name_is_reported(self):
+        with mock.patch.object(autostart, "scan_registry", return_value=[]), mock.patch.object(
+            autostart, "scan_folders", return_value=[]
+        ):
+            entries, problems = autostart.scan(("service",))
+        self.assertEqual(entries, [])
+        self.assertEqual(len(problems), 1)
+        self.assertIn("service", problems[0])
+        self.assertIn("不认识的来源", problems[0])
+
+    def test_known_names_produce_no_complaint(self):
+        with mock.patch.object(autostart, "scan_registry", return_value=[]):
+            _entries, problems = autostart.scan(("registry",))
+        self.assertEqual(problems, [])
+
+
 class TestLegacyMoveLeftovers(unittest.TestCase):
     """旧版 `--mode move` 在同一个键里把值改名成 `~pcxray~原名`。
 

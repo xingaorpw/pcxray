@@ -25,6 +25,9 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **`autostart.scan(("service",))` 传错名字会安静地返回 0 条。** 空列表和「没扫」
+  看起来一模一样，调用方会以为这一类真的没有东西。现在把不认识的来源写进
+  `problems` 报出来。
 - **`pcxray on <服务>` 什么都没改，却存一份备份、报「已改成自动启动」。** 列表里的
   服务都是 `StartMode='Auto'` 扫出来的，本来就开着。现在直接说「本来就是自动启动的
   服务，没动」。

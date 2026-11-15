@@ -547,6 +547,14 @@ def scan(include: tuple[str, ...] = ("registry", "folders", "tasks", "services")
     """
     entries: list[Entry] = []
     problems: list[str] = []
+    known = ("registry", "folders", "tasks", "services")
+    unknown = [name for name in include if name not in known]
+    if unknown:
+        # 传错一个名字（比如单数 `service`）以前会安安静静返回 0 条，调用方
+        # 会以为「这一类真的没有东西」。宁可报出来。
+        problems.append(
+            f"不认识的来源：{'、'.join(unknown)}（可选：{'、'.join(known)}）"
+        )
     if "registry" in include:
         entries.extend(scan_registry(problems))
     if "folders" in include:
