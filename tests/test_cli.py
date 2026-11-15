@@ -423,6 +423,30 @@ class TestCommandWiring(unittest.TestCase):
         self.assertTrue(kwargs["force"])
         self.assertEqual(kwargs["mode"], "move")
 
+    def test_arguments_never_carry_escape_codes_to_the_screen(self):
+        """参数里的转义序列不许原样打到终端上。
+
+        `\x1b[2J` 是清屏，`\x1b[1;31m` 是改颜色 —— 用户敲错一个名字，屏幕
+        就被擦了，还以为是工具坏了。名字和路径一律走 text.safe。
+        """
+        esc = "\x1b[2J"
+        cases = [
+            ["list", "--kind", "x" + esc],
+            ["list", "--include", "x" + esc],
+            ["off", "x" + esc],
+            ["on", "x" + esc],
+            ["restore", "C:\\x" + esc + ".json"],
+            ["restore", esc],
+        ]
+        for argv in cases:
+            out, err = io.StringIO(), io.StringIO()
+            with mock.patch.object(cli.autostart, "scan", return_value=([], [])), mock.patch.object(
+                cli.winapi, "processes", return_value=[]
+            ), contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                cli.main(argv)
+            both = out.getvalue() + err.getvalue()
+            self.assertNotIn("\x1b", both, f"{argv[0]} 把转义序列打出来了：{both!r}")
+
     def test_json_keeps_control_characters_raw(self):
         """显示层换掉控制字符，但 --json 必须给原样字符串。
 

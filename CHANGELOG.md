@@ -25,6 +25,11 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **上面那条第一次只修了一半。** 表格和折行两个出口过了 `safe`，但命令行里
+  还有几处直接 `print` 用户数据的：`off <名字>`、`restore <路径>`、不认识的
+  `--kind` / `--include`。实测这四个都会把 `\x1b[2J` 原样打出来。现在全过
+  `safe`，并加了一条行为测试：把带转义序列的参数喂给六个子命令，断言输出里
+  一个 `\x1b` 都没有（反证过：去掉一处 `safe` 立刻红）。
 - **一条自启项的名字能把终端清屏。** 注册表值名除了反斜杠和 NUL 什么字符都
   允许，任务名、exe 路径也一样。建一条名字是 `\x1b[2J\x1b[1;31mEVIL` 的 Run
   值，`pcxray list` 输出的就是原样的 ESC 字节 —— `\x1b[2J` 会清屏，用户看到的

@@ -105,8 +105,9 @@ def _print_results(results: list[actions.Result]) -> int:
     print("")
     for result in results:
         mark = "✓" if result.ok else "✗"
-        head = f"  {mark} {result.name}"
-        message = result.message
+        # 名字可能来自注册表值名（里面能塞转义序列），理由里也带着名字
+        head = f"  {mark} {text.safe(result.name)}"
+        message = text.safe(result.message)
         if not message:
             print(head)
             continue
@@ -154,7 +155,7 @@ def _cmd_list(args) -> int:
     if kind and kind not in _KNOWN_KINDS:
         # 不认识的 kind 以前会静默输出一份正常报告，用户会以为「这一类没有条目」
         print(
-            f"  ✗ 不认识的 --kind：{args.kind}\n"
+            f"  ✗ 不认识的 --kind：{text.safe(args.kind)}\n"
             f"    可选：{'、'.join(_KNOWN_KINDS)}",
             file=sys.stderr,
         )
@@ -164,7 +165,7 @@ def _cmd_list(args) -> int:
         if bad:
             # 静默忽略会变成「扫了 0 条」，用户以为系统很干净
             print(
-                f"  ✗ 不认识的 --include：{'、'.join(bad)}\n"
+                f"  ✗ 不认识的 --include：{'、'.join(text.safe(b) for b in bad)}\n"
                 f"    可选：{'、'.join(_KNOWN_INCLUDE)}",
                 file=sys.stderr,
             )
@@ -292,8 +293,8 @@ def _cmd_off(args) -> int:
     code = _print_results(results + done)
     if backup:
         # _print_results 结尾已经空了一行，这里再加一行就是连续两个空行
-        print(f"  备份已写入：{backup}")
-        print(f"  反悔就运行：pcxray restore \"{backup}\"")
+        print(f"  备份已写入：{text.safe(backup)}")
+        print(f"  反悔就运行：pcxray restore \"{text.safe(backup)}\"")
     if not args.dry_run and code == 0:
         print("")
         print("  重启后生效。想立刻确认这一条还会不会启动，用 --mode move 再关一次。")
@@ -311,7 +312,7 @@ def _cmd_on(args) -> int:
     code = _print_results(results + done)
     if backup:
         print("")
-        print(f"  备份已写入：{backup}")
+        print(f"  备份已写入：{text.safe(backup)}")
     return code
 
 
@@ -363,7 +364,7 @@ def _cmd_restore(args) -> int:
         # 注意：不能写成 f"...{"x" if c else "y"}..." —— 那是 3.12 才允许的
         # 同类引号嵌套，3.9 的解析器直接报 SyntaxError
         label = "使用备份" if any(r.ok for r in done) else "出问题的备份"
-        print(f"  {label}：{path}")
+        print(f"  {label}：{text.safe(path)}")
     return code
 
 
