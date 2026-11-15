@@ -25,6 +25,17 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **`--mode move` 会悄悄覆盖掉同名的自启项。** 改名时目标名如果已经有值，
+  Windows 直接覆盖，工具还返回「已改名为 …」—— 用户的一条自启项就这么没了，
+  事后完全看不出来，而 README 里写着「不删你的东西」。现在目标名已存在就停下
+  并说明原因（两个名字指向同一条命令时不算冲突，照改）。
+- **扫描器说「没查清楚」的话从来没进过表格。** 「快捷方式的目标没解出来」、
+  「读不到可执行文件路径」这些只写进了 JSON，命令行表格一个字都不显示 ——
+  用户看到光秃秃一个文件名，以为一切正常。现在单独用 `caveat` 字段承载这类
+  话，并且进备注列；「正在运行」这种状态描述不算，114 条服务全塞进去就是噪音。
+- **RunOnce 分支的 `note` 变量可能未定义。** 它只在 `elif` 分支里赋值，靠循环
+  顺序侥幸没炸；换一台机器（前面的条目都有 `StartupApproved` 记录）第一次遇到
+  RunOnce 就 `NameError`，整个扫描直接崩。
 - **`--elevate` 提权后打开的新窗口是坏的。** 拼出来的子进程命令是
   `python.exe list --elevate` —— 丢了 `-m pcxray`，python 会去找一个叫 `list`
   的文件，报 `can't open file 'list'`，新窗口闪一下就没了，而父进程还在说

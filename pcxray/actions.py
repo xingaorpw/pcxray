@@ -83,7 +83,7 @@ def _approved_subkey(kind: str) -> str:
     """`StartupApproved` 里对应哪一栏。
 
     只对注册表 Run 和启动文件夹有意义 —— 计划任务和服务是另外的开关机制，
-    以前这里对它们也返回 `\Run`，等于给了一个会写错地方的后门。现在直接抛错，
+    以前这里对它们也返回 `\\Run`，等于给了一个会写错地方的后门。现在直接抛错，
     将来谁接错分支都会当场炸，而不是悄悄往 Run 栏里塞一条没用的记录。
     """
     if kind not in _APPROVED_KINDS:
@@ -228,6 +228,18 @@ def _plan(entry, turn_on: bool, mode: str) -> dict | None:
             source = MOVE_PREFIX + value if turn_on else value
             target = value if turn_on else MOVE_PREFIX + value
             existed, old_value, old_kind = _read_value(hive, subkey, source)
+            if not existed:
+                # 源不存在就没得改。继续往下走会「把 target 写成空」，等于删掉它
+                return {"name": entry.name, "refuse": f"注册表里已经没有 {source} 这一条了，可能被别处改过" }
+            # 目标名已经有值了 —— 再写就是覆盖，而且用户完全看不到被覆盖掉的是
+            # 什么。宁可拒绝，也不要悄悄毁掉一条自启项。
+            target_exists, target_value, _target_kind = _read_value(hive, subkey, target)
+            if target_exists and target_value != old_value:
+                # 覆盖 = 悄悄毁掉一条用户的自启项，而且事后看不出来
+                return {
+                    "name": entry.name,
+                    "refuse": f"{target} 已经存在，再改会覆盖掉它，所以没动",
+                }
             return {
                 "kind": "move",
                 "hive": hive,
@@ -416,6 +428,9 @@ def _run(items, turn_on: bool, force: bool, dry_run: bool, mode: str) -> tuple[l
         plan = _plan(entry, turn_on, mode)
         if plan is None:
             skipped.append(Result(entry.name, False, "跳过：不知道怎么改这一条"))
+            continue
+        if plan.get("refuse"):
+            skipped.append(Result(entry.name, False, f"跳过：{plan['refuse']}"))
             continue
         plans.append(plan)
 

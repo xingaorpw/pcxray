@@ -414,5 +414,89 @@ class TestRealScan(unittest.TestCase):
         self.assertFalse(loose, f"这些 svchost 服务没被认成系统组件：\n{detail}")
 
 
+class TestMoveModeNeverOverwrites(unittest.TestCase):
+    """`--mode move` 改名时，目标名已经有值就必须停下。
+
+    以前直接写：目标名存在时 Windows 会覆盖，而且返回值还是「已改名为 …」。
+    用户的一条自启项就这么没了，事后完全看不出来 —— 工具承诺过「不删你的东西」。
+    """
+
+    KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+
+    def setUp(self):
+        if not winapi.IS_WINDOWS:
+            self.skipTest("注册表只有 Windows 有")
+        import tempfile
+
+        self._dir = tempfile.TemporaryDirectory()
+        self._patch = mock.patch.object(actions, "BACKUP_DIR", self._dir.name)
+        self._patch.start()
+        self.name = "pcxray_collide_test"
+        self.moved = actions.MOVE_PREFIX + self.name
+        self._write(self.name, '"C:\\Windows\\System32\\notepad.exe" /A')
+        self._write(self.moved, '"C:\\Windows\\System32\\notepad.exe" /B')
+
+    def tearDown(self):
+        for n in (self.name, self.moved):
+            self._delete(n)
+        self._patch.stop()
+        self._dir.cleanup()
+
+    def _write(self, name, value):
+        import winreg
+
+        k = winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, self.KEY, 0, winreg.KEY_SET_VALUE)
+        winreg.SetValueEx(k, name, 0, winreg.REG_SZ, value)
+        k.Close()
+
+    def _delete(self, name):
+        import winreg
+
+        try:
+            k = winreg.OpenKey(winreg.HKEY_CURRENT_USER, self.KEY, 0, winreg.KEY_SET_VALUE)
+            winreg.DeleteValue(k, name)
+            k.Close()
+        except OSError:
+            pass
+
+    def _read(self, name):
+        import winreg
+
+        try:
+            k = winreg.OpenKey(winreg.HKEY_CURRENT_USER, self.KEY)
+            value, _kind = winreg.QueryValueEx(k, name)
+            k.Close()
+            return value
+        except OSError:
+            return None
+
+    def _entry(self):
+        entries, _ = autostart.scan(("registry",))
+        for e in entries:
+            if e.name == self.name:
+                return e
+        self.fail("没扫到刚写进去的测试条目")
+
+    def test_disable_refuses_and_keeps_both_values(self):
+        results, _backup = actions.disable([self._entry()], mode="move")
+        self.assertFalse(results[0].ok, results[0].message)
+        self.assertIn("已经存在", results[0].message)
+        self.assertEqual(self._read(self.name), '"C:\\Windows\\System32\\notepad.exe" /A')
+        self.assertEqual(self._read(self.moved), '"C:\\Windows\\System32\\notepad.exe" /B')
+
+    def test_enable_refuses_and_keeps_both_values(self):
+        results, _backup = actions.enable([self._entry()], mode="move")
+        self.assertFalse(results[0].ok, results[0].message)
+        self.assertEqual(self._read(self.name), '"C:\\Windows\\System32\\notepad.exe" /A')
+        self.assertEqual(self._read(self.moved), '"C:\\Windows\\System32\\notepad.exe" /B')
+
+    def test_identical_value_is_not_a_conflict(self):
+        # 两个名字指向同一条命令时改过去不会丢信息，不该拦
+        self._write(self.moved, '"C:\\Windows\\System32\\notepad.exe" /A')
+        results, _backup = actions.disable([self._entry()], mode="move")
+        self.assertTrue(results[0].ok, results[0].message)
+        self.assertEqual(self._read(self.moved), '"C:\\Windows\\System32\\notepad.exe" /A')
+
+
 if __name__ == "__main__":
     unittest.main()
