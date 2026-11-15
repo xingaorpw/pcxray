@@ -25,6 +25,13 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **自检会在真机器上写注册表，但以前没人证明它跑完能擦干净。** 自检要建探针、
+  挪走、再删掉，全靠每个检查自己记得收尾 —— 上一轮就真漏了一次（探针留在
+  `Run-pcxray-disabled`，之后每轮对账都多一条）。现在 `main()` 在开跑前把
+  8 个 Run 位置和 3 个 `StartupApproved` 栏位抄一遍，全部跑完再抄一遍比对，
+  同时比对真实备份目录里的文件数：**自检不许在这台机器上留下任何改动**。
+  反证过：让演练检查不清理探针，立刻报
+  「这些变了：HKCU\...\Run\pcxray_selftest_noop」。
 - **演练检查自己的清理不干净，会把探针留在注册表里。** 反证时 dry_run 被短路，
   值真被挪进了 `Run-pcxray-disabled`，而清理只删了 `Run` —— 探针留在那儿，
   之后每一轮对账都多一条（`--kind run32 报了 1 条，系统里这一类有 0 条`）。

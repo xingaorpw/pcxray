@@ -1009,6 +1009,48 @@ def check_autostart_memory_is_deduped() -> None:
     check("自启占用不为负", got >= 0, "" if got >= 0 else f"读到 {got}")
 
 
+def _registry_snapshot() -> dict:
+    """把 8 个 Run 位置和 3 个 StartupApproved 栏位全抄一遍。
+
+    自检要在真机器上写注册表（建探针、挪走、再删掉），所以必须有一个办法
+    证明「跑完之后和跑之前一模一样」—— 这个函数就是那把尺子。
+    """
+    import winreg
+
+    from pcxray import autostart
+
+    state: dict[str, object] = {}
+    for hive_name, subkey, _scope, _kind, _label in autostart.RUN_KEYS:
+        hive = winreg.HKEY_CURRENT_USER if hive_name == "HKCU" else winreg.HKEY_LOCAL_MACHINE
+        try:
+            with winreg.OpenKey(hive, subkey) as handle:
+                index = 0
+                while True:
+                    try:
+                        key_name, value, _kind = winreg.EnumValue(handle, index)
+                    except OSError:
+                        break
+                    state[f"{hive_name}\\{subkey}\\{key_name}"] = value
+                    index += 1
+        except FileNotFoundError:
+            pass
+    approved = r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved"
+    for column in ("Run", "Run32", "StartupFolder"):
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, approved + "\\" + column) as handle:
+                index = 0
+                while True:
+                    try:
+                        key_name, value, _kind = winreg.EnumValue(handle, index)
+                    except OSError:
+                        break
+                    state[f"approved\\{column}\\{key_name}"] = value
+                    index += 1
+        except FileNotFoundError:
+            pass
+    return state
+
+
 def check_dry_run_writes_nothing() -> None:
     r"""`--dry-run` 必须一个字节都不改。
 
@@ -1019,7 +1061,7 @@ def check_dry_run_writes_nothing() -> None:
     import tempfile
     import winreg
 
-    from pcxray import autostart, winapi
+    from pcxray import winapi
 
     if not winapi.IS_WINDOWS:
         print("  · 跳过 --dry-run 检查（不是 Windows）")
@@ -1030,37 +1072,8 @@ def check_dry_run_writes_nothing() -> None:
     approved = r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved"
 
     def snapshot() -> dict:
-        """把 8 个 Run 位置和 3 个 StartupApproved 栏位全抄一遍。"""
-        state: dict[str, object] = {}
-        for hive_name, subkey, _scope, _kind, label in autostart.RUN_KEYS:
-            hive = winreg.HKEY_CURRENT_USER if hive_name == "HKCU" else winreg.HKEY_LOCAL_MACHINE
-            try:
-                with winreg.OpenKey(hive, subkey) as handle:
-                    index = 0
-                    while True:
-                        try:
-                            key_name, value, _kind = winreg.EnumValue(handle, index)
-                        except OSError:
-                            break
-                        state[f"{hive_name}\\{subkey}\\{key_name}"] = value
-                        index += 1
-            except FileNotFoundError:
-                pass
-        for column in ("Run", "Run32", "StartupFolder"):
-            subkey = approved + "\\" + column
-            try:
-                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, subkey) as handle:
-                    index = 0
-                    while True:
-                        try:
-                            key_name, value, _kind = winreg.EnumValue(handle, index)
-                        except OSError:
-                            break
-                        state[f"approved\\{column}\\{key_name}"] = value
-                        index += 1
-            except FileNotFoundError:
-                pass
-        return state
+        return _registry_snapshot()
+
 
     def run_cli(args: list[str], home: str) -> tuple[int, str]:
         env = dict(os.environ)
@@ -1153,6 +1166,12 @@ def check_dry_run_writes_nothing() -> None:
 
 def main() -> int:
     print("端到端自检")
+    # 先记下这台机器现在的样子，最后再比一遍
+    before_state = _registry_snapshot()
+    before_backups = set()
+    _backups_dir = os.path.join(os.path.expanduser("~"), ".pcxray", "backup")
+    if os.path.isdir(_backups_dir):
+        before_backups = set(os.listdir(_backups_dir))
     check_bad_arguments()
     check_json_filter()
     check_web_csrf()
@@ -1172,6 +1191,27 @@ def main() -> int:
     check_dry_run_writes_nothing()
     check_readme_test_count()
     check_python39_syntax()
+    # 自检自己在真机器上写注册表（建探针、挪走、再删掉）。跑完必须和跑之前
+    # 一模一样 —— 否则「自检」本身就成了污染源（真发生过：dry_run 被短路时
+    # 探针留在 Run-pcxray-disabled 里，后面每一轮对账都多一条）。
+    from pcxray import winapi as _winapi
+
+    if _winapi.IS_WINDOWS:
+        after = _registry_snapshot()
+        changed = sorted(k for k in set(before_state) | set(after) if before_state.get(k) != after.get(k))
+        check(
+            "自检没在这台机器上留下任何改动",
+            not changed,
+            "" if not changed else "这些变了：" + "、".join(changed[:3]),
+        )
+        backups = os.path.join(os.path.expanduser("~"), ".pcxray", "backup")
+        now_files = set(os.listdir(backups)) if os.path.isdir(backups) else set()
+        new_files = sorted(now_files - before_backups)
+        check(
+            "自检没往真实备份目录里写东西",
+            not new_files,
+            "" if not new_files else f"多出 {len(new_files)} 份：{new_files[:2]}",
+        )
     print()
     if FAILED:
         print(f"  {len(FAILED)} 项没通过：{'、'.join(FAILED)}")
