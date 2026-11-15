@@ -420,13 +420,15 @@ class TestPortHandling(unittest.TestCase):
         holder.listen(1)
         self.addCleanup(holder.close)
         scanned = []
-        buffer = io.StringIO()
+        out, err = io.StringIO(), io.StringIO()
         with mock.patch.object(web, "_snapshot", lambda **kw: scanned.append(1) or None):
-            with contextlib.redirect_stdout(buffer):
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
                 code = web.serve(port=port, open_browser=False)
         # 报错信息必须提到「端口」和换一个的出路，不能只丢个 WinError 给用户
-        self.assertIn("端口", buffer.getvalue())
-        self.assertIn("--port 0", buffer.getvalue())
+        # 而且要写在 stderr：脚本重定向 stdout 时，错误混进正常输出里就看不见了
+        self.assertIn("端口", err.getvalue())
+        self.assertIn("--port 0", err.getvalue())
+        self.assertEqual(out.getvalue(), "", "失败的时候 stdout 不该有东西")
         self.assertEqual(code, 1)
         self.assertEqual(scanned, [], "端口都起不来，不该先去扫描")
 
