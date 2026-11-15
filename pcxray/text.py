@@ -42,6 +42,10 @@ def truncate(text: str, limit: int, ellipsis: str = "…") -> str:
 
 
 def pad(text: str, limit: int, align: str = "left") -> str:
+    # 宽度 <= 0 时没有「补到多宽」这回事，原样返回。走 truncate 的话
+    # 内容会被整段吞掉 —— 静默丢数据比显示不齐更糟。
+    if limit <= 0:
+        return text
     text = truncate(text, limit)
     gap = limit - width(text)
     if gap <= 0:

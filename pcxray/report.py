@@ -127,17 +127,33 @@ class Report:
     def disabled(self) -> list[Item]:
         return [i for i in self.items if not i.entry.enabled]
 
-    def autostart_memory(self) -> float:
-        """自启项现在实际占的内存（按 PID 去重）。"""
+    def autostart_memory(self, items: list[Item] | None = None) -> float:
+        """自启项现在实际占的内存（按 PID 去重）。
+
+        `items` 不传就用全部条目；过滤视图下要传过滤后的，否则会出现
+        「只筛出 3 条，却报全量内存」这种自相矛盾的数字。
+        """
         pids: dict[int, float] = {}
-        for item in self.items:
+        for item in self.items if items is None else items:
             if not item.entry.enabled:
                 continue
             for proc in item.runs:
                 pids[proc.pid] = proc.mb
         return sum(pids.values())
 
-    def as_dict(self) -> dict:
+    def as_dict(self, only: str = "", limit: int = 0) -> dict:
+        """转成 JSON。
+
+        `only` / `limit` 必须真的生效 —— 第一版 `--json` 直接忽略了这两个参数，
+        于是 `--json --kind task` 把 183 条全都吐出来，脚本按 kind 过滤时拿到
+        的是错数据。计数也要跟着重算，不能让 total 和 items 对不上。
+        """
+        items = self.items
+        if only:
+            items = [i for i in items if i.entry.kind == only]
+        if limit:
+            items = items[:limit]
+        enabled = [i for i in items if i.entry.enabled]
         return {
             "generated": time.strftime("%Y-%m-%d %H:%M:%S"),
             "admin": self.admin,
@@ -151,11 +167,11 @@ class Report:
             "process_count": self.process_count,
             "unreadable_processes": self.unreadable,
             "autostart": {
-                "total": len(self.items),
-                "enabled": len(self.enabled),
-                "disabled": len(self.disabled),
-                "memory_mb": round(self.autostart_memory(), 1),
-                "items": [i.as_dict() for i in self.items],
+                "total": len(items),
+                "enabled": len(enabled),
+                "disabled": len(items) - len(enabled),
+                "memory_mb": round(self.autostart_memory(items), 1),
+                "items": [i.as_dict() for i in items],
             },
             "background": [
                 {

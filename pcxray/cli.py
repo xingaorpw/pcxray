@@ -93,13 +93,45 @@ def _load_entries(args) -> tuple[list[autostart.Entry], list[str]]:
     return autostart.scan(include)
 
 
+_KNOWN_KINDS = ("run", "run32", "runonce", "folder", "task", "service")
+_KNOWN_INCLUDE = ("registry", "folders", "tasks", "services")
+
+
 def _cmd_list(args) -> int:
+    if args.limit < 0:
+        # 负数是坑：`shown[:-1]` 会静默少掉最后一行，看起来像「数据就这么点」
+        print("  ✗ --limit 不能是负数。0 表示不限，其它值是最多显示几行。", file=sys.stderr)
+        return 2
+    if args.kind and args.kind not in _KNOWN_KINDS:
+        # 不认识的 kind 以前会静默输出一份正常报告，用户会以为「这一类没有条目」
+        print(
+            f"  ✗ 不认识的 --kind：{args.kind}\n"
+            f"    可选：{'、'.join(_KNOWN_KINDS)}",
+            file=sys.stderr,
+        )
+        return 2
+    if args.include:
+        bad = [p for p in args.include.split(",") if p and p not in _KNOWN_INCLUDE]
+        if bad:
+            # 静默忽略会变成「扫了 0 条」，用户以为系统很干净
+            print(
+                f"  ✗ 不认识的 --include：{'、'.join(bad)}\n"
+                f"    可选：{'、'.join(_KNOWN_INCLUDE)}",
+                file=sys.stderr,
+            )
+            return 2
     entries, problems = _load_entries(args)
     process_list = winapi.processes()
     if args.json:
         rep = report_mod.build(entries=entries, process_list=process_list)
         rep.problems.extend(problems)
-        print(json.dumps(rep.as_dict(), ensure_ascii=False, indent=2))
+        print(
+            json.dumps(
+                rep.as_dict(only=args.kind or "", limit=args.limit),
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
         return 0
     rep = report_mod.build(entries=entries, process_list=process_list)
     rep.problems.extend(p for p in problems if p not in rep.problems)
@@ -113,12 +145,15 @@ def _cmd_ram(args) -> int:
     logon = procs.logon_time(process_list)
     groups = procs.group(process_list)
     if args.json:
+        # total_mb 必须等于「各组 mb 相加」—— 用户会拿计算器核。先各自取到
+        # 一位小数再求和，否则四舍五入误差会累积出零点几 MB 的差。
+        rounded = [round(g.mb, 1) for g in groups]
         print(
             json.dumps(
                 {
                     "logon": logon,
                     "coverage": winapi.COVERAGE,
-                    "total_mb": round(sum(g.mb for g in groups), 1),
+                    "total_mb": round(sum(rounded), 1),
                     "groups": [g.as_dict() for g in groups],
                 },
                 ensure_ascii=False,

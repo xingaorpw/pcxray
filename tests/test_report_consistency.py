@@ -119,6 +119,63 @@ class TestMemoryAttribution(unittest.TestCase):
         self.assertEqual(data["autostart"]["items"][0]["shared"], 2)
 
 
+class TestJsonFiltering(unittest.TestCase):
+    """`--json --kind X` 必须真的只给 X。
+
+    第一版 JSON 路径完全忽略了 `only` / `limit`，每种 kind 都吐出全部 183 条 ——
+    脚本按 kind 过滤时拿到的是错数据，而且看起来一切正常。
+    """
+
+    def setUp(self):
+        self.entries = [
+            entry("RunA", r"C:\a.exe", kind="run"),
+            entry("TaskA", r"C:\t.exe", kind="task"),
+            entry("TaskB", r"C:\t2.exe", kind="task"),
+            entry("SvcA", r"C:\s.exe", kind="service"),
+        ]
+        self.rep = build(
+            self.entries,
+            [fake_proc(1, r"C:\a.exe", 10.0), fake_proc(2, r"C:\t.exe", 20.0)],
+        )
+
+    def test_only_keeps_one_kind(self):
+        data = self.rep.as_dict(only="task")
+        self.assertEqual([i["name"] for i in data["autostart"]["items"]], ["TaskA", "TaskB"])
+        self.assertEqual(data["autostart"]["total"], 2)
+
+    def test_counts_are_recomputed_after_filtering(self):
+        data = self.rep.as_dict(only="task")
+        self.assertEqual(data["autostart"]["total"], len(data["autostart"]["items"]))
+        self.assertEqual(
+            data["autostart"]["enabled"] + data["autostart"]["disabled"],
+            data["autostart"]["total"],
+        )
+
+    def test_limit_applies(self):
+        data = self.rep.as_dict(limit=2)
+        self.assertEqual(len(data["autostart"]["items"]), 2)
+        self.assertEqual(data["autostart"]["total"], 2)
+
+    def test_only_and_limit_together(self):
+        data = self.rep.as_dict(only="task", limit=1)
+        self.assertEqual([i["name"] for i in data["autostart"]["items"]], ["TaskA"])
+
+    def test_no_filter_is_everything(self):
+        data = self.rep.as_dict()
+        self.assertEqual(data["autostart"]["total"], len(self.entries))
+
+    def test_memory_follows_the_filter(self):
+        full = self.rep.as_dict()
+        only_run = self.rep.as_dict(only="run")
+        self.assertGreater(full["autostart"]["memory_mb"], only_run["autostart"]["memory_mb"])
+        self.assertAlmostEqual(only_run["autostart"]["memory_mb"], 10.0, places=1)
+
+    def test_unknown_kind_gives_empty_not_everything(self):
+        data = self.rep.as_dict(only="nope")
+        self.assertEqual(data["autostart"]["total"], 0)
+        self.assertEqual(data["autostart"]["items"], [])
+
+
 class TestGroupCoverage(unittest.TestCase):
     def test_every_process_lands_in_exactly_one_group(self):
         procs_list = [

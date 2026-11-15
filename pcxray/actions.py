@@ -432,8 +432,12 @@ def restore(path: str = "", dry_run: bool = False) -> tuple[list[Result], str]:
     try:
         with open(path, "r", encoding="utf-8") as handle:
             payload = json.load(handle)
-    except (OSError, json.JSONDecodeError) as exc:
-        return [Result("（还原）", False, f"读备份失败：{exc}")], path
+    except FileNotFoundError:
+        return [Result("（还原）", False, f"没有这个备份文件：{path}")], path
+    except OSError as exc:
+        return [Result("（还原）", False, f"读备份失败：{path}（{exc.strerror or exc}）")], path
+    except json.JSONDecodeError:
+        return [Result("（还原）", False, f"备份文件不是合法 JSON：{path}")], path
     ops = payload.get("ops") or []
     results: list[Result] = []
     for op in ops:

@@ -9,6 +9,7 @@ from __future__ import annotations
 import contextlib
 import io
 import unittest
+from unittest import mock
 
 from pcxray import autostart, cli
 
@@ -22,6 +23,13 @@ def quiet_stderr():
     """argparse 报错会往 stderr 打字，测试里不需要看它。"""
     buffer = io.StringIO()
     with contextlib.redirect_stderr(buffer):
+        yield buffer
+
+
+@contextlib.contextmanager
+def quiet_stdout():
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
         yield buffer
 
 
@@ -118,6 +126,71 @@ class TestParser(unittest.TestCase):
         args = self.parser.parse_args(["list", "--kind", "task", "--include", "registry,folders"])
         self.assertEqual(args.kind, "task")
         self.assertEqual(args.include, "registry,folders")
+
+
+class TestListArgumentValidation(unittest.TestCase):
+    """坏参数要当场报错。
+
+    以前 `--kind nope` 会静默输出一份正常报告 —— 用户以为「这一类没有条目」，
+    其实是他把类型名打错了。`--limit -1` 更隐蔽：`shown[:-1]` 少掉最后一行，
+    看起来就像「数据就这么点」。
+    """
+
+    def setUp(self):
+        self.parser = cli.build_parser()
+
+    def _run(self, argv):
+        args = self.parser.parse_args(argv)
+        with mock.patch.object(cli, "_load_entries", return_value=([], [])), mock.patch.object(
+            cli.winapi, "processes", return_value=[]
+        ), mock.patch.object(cli.winapi, "memory_status", return_value=(0, 0)), mock.patch.object(
+            cli.winapi, "boot_time", return_value=0.0
+        ), mock.patch.object(cli.procs, "logon_time", return_value=0.0), mock.patch.object(
+            cli.report_mod, "build", side_effect=lambda **kw: _empty_report()
+        ):
+            with quiet_stdout(), quiet_stderr():
+                return args.func(args)
+
+    def test_negative_limit_is_rejected(self):
+        self.assertEqual(self._run(["list", "--limit", "-1"]), 2)
+
+    def test_unknown_kind_is_rejected(self):
+        self.assertEqual(self._run(["list", "--kind", "nope"]), 2)
+
+    def test_unknown_include_is_rejected(self):
+        # 静默忽略会变成「扫了 0 条」，用户以为系统很干净
+        self.assertEqual(self._run(["list", "--include", "nope"]), 2)
+
+    def test_one_bad_include_rejects_the_whole_call(self):
+        self.assertEqual(self._run(["list", "--include", "registry,nope"]), 2)
+
+    def test_every_documented_include_is_accepted(self):
+        for part in cli._KNOWN_INCLUDE:
+            with self.subTest(part=part):
+                self.assertEqual(self._run(["list", "--include", part]), 0)
+
+    def test_limit_zero_means_unlimited(self):
+        self.assertEqual(self._run(["list", "--limit", "0"]), 0)
+
+    def test_every_documented_kind_is_accepted(self):
+        for kind in cli._KNOWN_KINDS:
+            with self.subTest(kind=kind):
+                self.assertEqual(self._run(["list", "--kind", kind]), 0)
+
+    def test_known_kinds_match_what_the_scanner_emits(self):
+        # 这两边一旦不同步，用户就会遇到「文档里写了但 --kind 不认」
+        from pcxray import autostart
+
+        emitted = set(autostart._KIND_ORDER) if hasattr(autostart, "_KIND_ORDER") else set()
+        if emitted:
+            self.assertTrue(set(cli._KNOWN_KINDS) >= emitted, emitted - set(cli._KNOWN_KINDS))
+
+
+def _empty_report():
+    from pcxray import report as report_mod
+
+    rep = report_mod.Report()
+    return rep
 
 
 class TestPick(unittest.TestCase):

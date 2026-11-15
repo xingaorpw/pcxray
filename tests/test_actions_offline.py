@@ -164,7 +164,8 @@ class TestRestoreEdge(unittest.TestCase):
     def test_missing_backup_reports_clearly(self):
         results, _ = actions.restore("/definitely/not/here.json")
         self.assertFalse(results[0].ok)
-        self.assertIn("读备份失败", results[0].message)
+        self.assertIn("没有这个备份文件", results[0].message)
+        self.assertIn("/definitely/not/here.json", results[0].message)
 
     def test_no_backups_at_all(self):
         with mock.patch.object(actions, "list_backups", lambda: []):
@@ -179,7 +180,7 @@ class TestRestoreEdge(unittest.TestCase):
                 handle.write("{not json")
             results, _ = actions.restore(path)
             self.assertFalse(results[0].ok)
-            self.assertIn("读备份失败", results[0].message)
+            self.assertIn("不是合法 JSON", results[0].message)
 
     def test_unknown_op_kind_is_reported(self):
         with tempfile.TemporaryDirectory() as tmp:
