@@ -373,10 +373,13 @@ def check_page_js_escapes_hostile_data() -> None:
     check("正常内容仍然渲染", "可疑路径" in rendered and "注册表 · 用户 Run" in rendered)
     # 内存那两个数字必须真的渲染出来。键名对不上时页面会安静地显示「未知」——
     # 不报错、不空白，就是没数字，只有断言具体数值才抓得到。
+    shows_memory = "8192.0 MB" in blob["s"] and "4096.0 MB" in blob["s"]
     check(
         "页面把物理内存渲染成数字",
-        "8192.0 MB" in blob["s"] and "4096.0 MB" in blob["s"],
-        "stats 里没找到 8192.0 / 4096.0 MB：" + re.sub(r"<[^>]+>", " ", blob["s"])[:80],
+        shows_memory,
+        ""
+        if shows_memory
+        else "stats 里没找到 8192.0 / 4096.0 MB：" + re.sub(r"<[^>]+>", " ", blob["s"])[:80],
     )
 
 
@@ -1286,6 +1289,92 @@ def check_no_newer_stdlib_apis() -> None:
     )
 
 
+def check_served_page_is_the_template_filled_in() -> None:
+    r"""真起一次服务，把页面取回来 —— 模板替换对不对，只有这一步能证明。
+
+    `check_page_markup` 是**自己手工**把 `__TOKEN__` 替换掉再检查结构的。要是
+    `_send` 里漏替换一个占位符，它照样绿，而用户打开浏览器看到的是一段
+    `__TOKEN__`，点任何按钮都 403。所以这里必须走真正的 HTTP。
+    """
+    import json as _json
+    import re as _re
+    import threading as _threading
+    import urllib.error as _urlerr
+    import urllib.request as _urlreq
+
+    from pcxray import web as _web
+
+    server = _web.make_server(0)
+    thread = _threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+
+    def call(path, data=None, headers=None):
+        request = _urlreq.Request(base + path, data=data, headers=headers or {})
+        try:
+            with _urlreq.urlopen(request, timeout=60) as response:
+                return response.status, response.read().decode("utf-8")
+        except _urlerr.HTTPError as exc:
+            return exc.code, exc.read().decode("utf-8", "replace")
+
+    try:
+        status, page = call("/")
+        check("取回来的页面状态码是 200", status == 200, f"读到 {status}")
+        leftover = sorted(set(_re.findall(r"__[A-Z][A-Z_]{2,}__", page)))
+        check("页面里没有没替换的占位符", not leftover, f"还剩 {leftover}")
+
+        match = _re.search(r'const TOKEN="([^"]+)"', page)
+        check("页面里带着令牌", bool(match), "" if match else "页面里找不到 const TOKEN=")
+        token = match.group(1) if match else ""
+
+        # 用页面里那个令牌真发一次请求：令牌对不对，只有服务器说了算。
+        # 用一个不存在的 key —— 鉴权通过才会走到「找不到这些条目」（400），
+        # 鉴权没过是 403。这样既验了令牌，又什么都没改。
+        body = _json.dumps({"keys": ["__ci_checks_不存在的探针__"]}).encode()
+        status, text = call(
+            "/api/off",
+            body,
+            {"Content-Type": "application/json", "X-PCXRAY-Token": token, "Origin": base},
+        )
+        check("用页面里的令牌能通过鉴权", status == 400, f"读到 {status}：{text[:120]}")
+        rejected = "找不到这些条目" in text
+        check("不存在的 key 被如实拒绝", rejected, "" if rejected else f"回复不对：{text[:160]}")
+
+        status, body = call("/api/report")
+        check("报告接口返回 200", status == 200, f"读到 {status}")
+        report = _json.loads(body)
+        autostart = report.get("autostart") or {}
+        items = autostart.get("items") or []
+        check(
+            "报告里 total 等于条目数",
+            autostart.get("total") == len(items),
+            f"total={autostart.get('total')}，条目 {len(items)} 条",
+        )
+        if autostart.get("enabled") is not None and autostart.get("disabled") is not None:
+            adds_up = autostart["enabled"] + autostart["disabled"] == autostart["total"]
+            check(
+                "报告里启用 + 禁用 等于总数",
+                adds_up,
+                ""
+                if adds_up
+                else f"{autostart['enabled']} + {autostart['disabled']} != {autostart['total']}",
+            )
+        ram = report.get("ram") or {}
+        check(
+            "报告里可用内存不超过总内存",
+            0 <= ram.get("physical_available_mb", 0) <= ram.get("physical_total_mb", 0),
+            f"可用 {ram.get('physical_available_mb')} / 总 {ram.get('physical_total_mb')}",
+        )
+        check(
+            "报告里进程数不少于后台分组条数",
+            (report.get("process_count") or 0) >= len(report.get("background") or []),
+            f"进程 {report.get('process_count')}，后台分组 {len(report.get('background') or [])}",
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def main() -> int:
     print("端到端自检")
     # 先记下这台机器现在的样子，最后再比一遍
@@ -1297,6 +1386,7 @@ def main() -> int:
     check_bad_arguments()
     check_json_filter()
     check_web_csrf()
+    check_served_page_is_the_template_filled_in()
     check_page_markup()
     check_page_js_escapes_hostile_data()
     check_page_js_filters()
