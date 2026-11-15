@@ -238,7 +238,7 @@ def _cmd_off(args) -> int:
     # 于是 `pcxray off 真的 不存在的` 只报成功那一条、退出码 0 —— 用户以为两个都办了。
     code = _print_results(results + done)
     if backup:
-        print("")
+        # _print_results 结尾已经空了一行，这里再加一行就是连续两个空行
         print(f"  备份已写入：{backup}")
         print(f"  反悔就运行：pcxray restore \"{backup}\"")
     if not args.dry_run and code == 0:
