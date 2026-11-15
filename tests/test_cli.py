@@ -303,6 +303,33 @@ class TestEmptyNameIsExplained(unittest.TestCase):
         self.assertIn("名字不能是空的", out.getvalue())
 
 
+class TestRamSaysWhenNumbersAreIncomplete(unittest.TestCase):
+    """内存数字不完整时必须说明原因。
+
+    未文档化的全量内存接口自检没通过时，程序会退回逐个进程读 —— 数字会少
+    一截。用户看到的总数和任务管理器对不上，如果不说原因，只会以为工具算错。
+    """
+
+    def test_partial_coverage_prints_the_reason(self):
+        out = io.StringIO()
+        coverage_state = {"mode": "partial", "reason": "全量接口自检没通过，已退回逐个进程读取"}
+        with mock.patch.object(cli.winapi, "processes", return_value=[]), mock.patch.object(
+            cli.winapi, "COVERAGE", coverage_state
+        ), contextlib.redirect_stdout(out):
+            code = cli.main(["ram"])
+        self.assertEqual(code, 0)
+        text = out.getvalue()
+        self.assertIn("全量接口自检没通过", text, f"退化了却没说原因：{text}")
+
+    def test_all_coverage_prints_no_reason(self):
+        out = io.StringIO()
+        with mock.patch.object(cli.winapi, "processes", return_value=[]), mock.patch.object(
+            cli.winapi, "COVERAGE", {"mode": "all", "reason": ""}
+        ), contextlib.redirect_stdout(out):
+            cli.main(["ram"])
+        self.assertNotIn("自检没通过", out.getvalue())
+
+
 class TestPortRange(unittest.TestCase):
     """--port 70000 / -1 以前直接把 socket 的 OSError 抛出去，一屏 traceback。"""
 

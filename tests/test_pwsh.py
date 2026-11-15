@@ -73,6 +73,40 @@ class TestUnavailable(unittest.TestCase):
 
 
 @unittest.skipUnless(pwsh.available(), "这台机器没有 PowerShell")
+class TestJsonSalvage(unittest.TestCase):
+    """PowerShell 在 JSON 前后多打了几行时，得把 JSON 捞出来。
+
+    计划任务/服务那两段脚本靠 `ConvertTo-Json -Compress` 输出，但 PowerShell
+    经常在前面先吐一行警告。整段 `json.loads` 会失败，于是要逐行往回找。
+    """
+
+    def _run(self, stdout):
+        with mock.patch.object(pwsh, "_run", return_value=(0, stdout.encode("utf-8"), b"", "")):
+            return pwsh.run_json("x")
+
+    def test_warning_line_before_json_is_ignored(self):
+        ok, data, reason = self._run('警告：某模块没加载\n[{"a": 1}]')
+        self.assertTrue(ok, reason)
+        self.assertEqual(data, [{"a": 1}])
+
+    def test_a_line_that_starts_with_brace_but_is_not_json_is_skipped(self):
+        """`{` 开头但不是合法 JSON 的行要跳过，继续往上找真的那份。
+
+        坏行必须放在**后面**：程序是从下往上找的，先撞上坏行、跳过之后才捞到
+        好的。第一版把坏行放在前面，好行先被找到 —— 那条测试根本没走到「跳过」
+        （反证时它是绿的）。
+        """
+        ok, data, reason = self._run('[{"ok": 1}]\n{这不是 JSON')
+        self.assertTrue(ok, reason)
+        self.assertEqual(data, [{"ok": 1}])
+
+    def test_nothing_parseable_reports_the_text(self):
+        ok, data, reason = self._run("{坏的\n还是坏的")
+        self.assertFalse(ok)
+        self.assertIsNone(data)
+        self.assertIn("不是合法 JSON", reason)
+
+
 class TestFailurePaths(unittest.TestCase):
     """PowerShell 出各种问题时要给出能看懂的原因，不能返回空列表。
 

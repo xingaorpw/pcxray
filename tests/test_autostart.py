@@ -11,6 +11,50 @@ from unittest import mock
 from pcxray import autostart
 
 
+class TestScanFailuresAreSurvivable(unittest.TestCase):
+    """某个来源读不到时，别的来源还得照常给出来。
+
+    计划任务和服务是靠 PowerShell 读的。PowerShell 被策略禁掉、超时、输出
+    乱码，都不该让整个 `pcxray list` 变成空的 —— 用户至少还能看到注册表那
+    一摊。而且失败原因要说出来，不能悄悄少一批。
+    """
+
+    def test_tasks_failure_returns_reason(self):
+        with mock.patch.object(autostart.pwsh, "run_json", return_value=(False, None, "超时了")):
+            items, reason = autostart.scan_tasks()
+        self.assertEqual(items, [])
+        self.assertEqual(reason, "超时了")
+
+    def test_tasks_failure_without_reason_still_says_something(self):
+        with mock.patch.object(autostart.pwsh, "run_json", return_value=(False, None, "")):
+            items, reason = autostart.scan_tasks()
+        self.assertEqual(items, [])
+        self.assertIn("读不到", reason)
+
+    def test_services_failure_returns_reason(self):
+        with mock.patch.object(autostart.pwsh, "run_json", return_value=(False, None, "被策略禁了")):
+            items, reason = autostart.scan_services()
+        self.assertEqual(items, [])
+        self.assertEqual(reason, "被策略禁了")
+
+    def test_non_dict_rows_are_skipped_not_crashing(self):
+        rows = [None, "垃圾", 42, {"Name": "Svc1", "PathName": "C:\\a.exe", "State": "Running"}]
+        with mock.patch.object(autostart.pwsh, "run_json", return_value=(True, rows, "")):
+            items, reason = autostart.scan_services()
+        self.assertEqual(reason, "")
+        self.assertEqual([e.name for e in items], ["Svc1"])
+
+    def test_one_broken_source_does_not_kill_the_whole_scan(self):
+        """计划任务那边抛异常时，注册表和服务的条目必须照旧返回。"""
+        boom = mock.patch.object(autostart, "scan_tasks", side_effect=RuntimeError("炸了"))
+        with boom, mock.patch.object(autostart, "scan_services", return_value=([], "")), \
+                mock.patch.object(autostart, "scan_registry", return_value=[]), \
+                mock.patch.object(autostart, "scan_folders", return_value=[]):
+            entries, problems = autostart.scan(include=("registry", "tasks", "services"))
+        self.assertEqual(entries, [])
+        self.assertTrue(any("计划任务" in p and "炸了" in p for p in problems), problems)
+
+
 class TestDecodeApproved(unittest.TestCase):
     """`StartupApproved` 的编码是实测出来的，这里把实测值钉死。"""
 
