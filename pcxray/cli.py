@@ -272,9 +272,17 @@ def _pick(entries, names: list[str]) -> tuple[list[autostart.Entry], list[action
             picked.append(hit)
             continue
         if candidates:
-            names_shown = "、".join(f"{c.name}（{c.source}）" for c in candidates[:6])
+            # 一次列六条名字（有的名字六十多个字符）会变成一堵墙，看不完也抄不下。
+            # 给前 4 条 + 一句去哪儿看全，比全列出来有用。
+            shown = "、".join(f"{c.name}（{c.source}）" for c in candidates[:4])
+            more = f"　…… 还有 {len(candidates) - 4} 条" if len(candidates) > 4 else ""
             problems.append(
-                actions.Result(name, False, f"匹配到 {len(candidates)} 条，请写更完整的名字：{names_shown}")
+                actions.Result(
+                    name,
+                    False,
+                    f"匹配到 {len(candidates)} 条，请写更完整的名字：{shown}{more}"
+                    f"（全名用 pcxray list --kind {candidates[0].kind} 看）",
+                )
             )
         else:
             problems.append(actions.Result(name, False, "没有这一条，先跑 pcxray list 看看名字"))

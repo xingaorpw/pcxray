@@ -128,6 +128,35 @@ class TestParser(unittest.TestCase):
         self.assertEqual(args.include, "registry,folders")
 
 
+class TestAmbiguousCandidatesAreCapped(unittest.TestCase):
+    """匹配到多条时只列前 4 条。
+
+    六个名字、每个六十多个字符，一次全列出来是一堵墙 —— 看不完也抄不下来。
+    """
+
+    def _pick(self, names, query):
+        entries = [
+            autostart.Entry(name=n, kind="run", source="注册表 · 当前用户 Run", scope="user")
+            for n in names
+        ]
+        return cli._pick(entries, [query])
+
+    def test_lists_at_most_four_and_says_how_many_more(self):
+        picked, problems = self._pick([f"MicrosoftEdgeAutoLaunch_{i:04d}" for i in range(9)], "MicrosoftEdge")
+        self.assertEqual(picked, [])
+        self.assertEqual(len(problems), 1)
+        message = problems[0].message
+        self.assertIn("匹配到 9 条", message)
+        self.assertIn("还有 5 条", message)
+        self.assertIn("pcxray list --kind run", message)
+
+    def test_four_or_fewer_lists_them_all_without_the_more_hint(self):
+        _picked, problems = self._pick([f"thing{i}" for i in range(3)], "thing")
+        self.assertEqual(len(problems), 1)
+        self.assertIn("匹配到 3 条", problems[0].message)
+        self.assertNotIn("还有", problems[0].message)
+
+
 class TestResolveIgnoresSeparators(unittest.TestCase):
     """用户记不住名字里的下划线和空格，敲 `clash verge` 就该能找到
     `ClashVerge`。
