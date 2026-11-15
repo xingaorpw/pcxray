@@ -112,6 +112,25 @@ class TestShortSourceAndMarks(unittest.TestCase):
         self.assertIn("不显窗", row)
 
 
+class TestProblemsAreSanitized(unittest.TestCase):
+    """problems 里可能有 PowerShell 的原始报错和任务名/服务名。
+
+    这些是外部数据：`\x1b[2J` 会清屏，`\r` 会把整行冲掉（PowerShell 输出是
+    CRLF，这不是恶意也能发生）。渲染时必须压成一行、控制字符换成看得见的写法。
+    """
+
+    def test_escape_and_newlines_do_not_reach_the_terminal(self):
+        rep = report.Report()
+        rep.problems = ["服务：\x1b[2J名字\r\n第二行"]
+        rendered = report.render(rep)
+        joined = "\n".join(rendered)
+        self.assertNotIn("\x1b", joined)
+        self.assertNotIn("\r", joined)
+        self.assertIn("\\x1b[2J", joined, "应该显示成看得见的写法")
+        self.assertEqual(len([line for line in rendered if "第二行" in line]), 1, "压成一行")
+        self.assertIn("名字 第二行", joined, "换行变空格，不要挤成一坨")
+
+
 class TestHeaderSaysWhenSomethingWasNotRead(unittest.TestCase):
     """有来源读不到时，「自启 0 条」是假的 —— 这台机器可能有 183 条，只是没读到。
 

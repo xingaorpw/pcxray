@@ -471,7 +471,10 @@ def render(report: Report, limit: int = 0, only: str = "") -> list[str]:
     if report.memory_coverage != "all":
         notes.append("内存数据只覆盖了一部分进程（见上面的 problems）")
     for problem in report.problems:
-        notes.append(problem)
+        # problems 里可能有 PowerShell 的原始报错（带 CRLF）和任务名/服务名。
+        # 直接拼进提示行，`\x1b[2J` 就能清屏、`\r` 能把行冲掉 —— 这里也要过 safe。
+        flat = problem.replace("\r\n", " ").replace("\r", " ").replace("\n", " ")
+        notes.append(text.safe(flat))
     if notes:
         lines.append("")
         for note in notes:

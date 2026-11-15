@@ -25,6 +25,12 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **第三条漏网的路：底部「读不到的部分」提示。** 那块直接拼 `problems`，里面
+  可能是 PowerShell 的原始报错（CRLF）和服务名 —— `\x1b[2J` 照样清屏，`\r` 照样
+  冲掉整行。现在压成一行并换成看得见的写法。
+  顺带查清了一件反向的事：**Windows 文件名不允许控制字符**（实测建
+  `\x1b[2Jevil.json` 直接 `OSError: Invalid argument`），所以备份列表、启动文件夹
+  那几条路天然安全，不用改。
 - **上面那条第一次只修了一半。** 表格和折行两个出口过了 `safe`，但命令行里
   还有几处直接 `print` 用户数据的：`off <名字>`、`restore <路径>`、不认识的
   `--kind` / `--include`。实测这四个都会把 `\x1b[2J` 原样打出来。现在全过
