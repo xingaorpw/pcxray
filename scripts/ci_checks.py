@@ -959,6 +959,56 @@ def check_page_reads_only_real_fields() -> None:
         print("  · 跳过后台字段检查（这台机器没有后台程序）")
 
 
+def check_autostart_memory_is_deduped() -> None:
+    r"""`autostart.memory_mb` 必须比「直接把各条加起来」小，前提是真有重复。
+
+    同一个进程可能被两条自启项指向（本机 Edge 就有两条），实现是按 **PID**
+    去重的。所以：
+      - 有重复指向的 exe 时，`memory_mb` 必须**严格小于**各条直接相加；
+      - 没有重复时，两者必须**基本相等**。
+    不写成「按 exe 去重算一遍再比」—— 那是照着我猜的口径写检查，实现要是
+    按别的方式去重（比如一个 exe 起了两个进程），检查就会冤枉它。
+    """
+    import json
+    import subprocess
+    import sys
+
+    done = subprocess.run(
+        [sys.executable, "-m", "pcxray", "list", "--json", "--limit", "0"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    if done.returncode != 0:
+        check("自启占用检查能跑", False, done.stderr[-160:])
+        return
+    payload = json.loads(done.stdout)["autostart"]
+    items = payload.get("items") or []
+    got = payload.get("memory_mb")
+    if got is None:
+        check("自启占用字段存在", False, "没有 memory_mb")
+        return
+    running = [i for i in items if i.get("enabled") and (i.get("running_mb") or 0) > 0]
+    naive = round(sum(i["running_mb"] for i in running), 1)
+    exes = [(i.get("exe") or "").lower() for i in running]
+    has_dupes = len(exes) != len(set(exes))
+    if has_dupes:
+        smaller = got < naive - 0.5
+        check(
+            "有重复指向时，自启占用比直接相加小",
+            smaller,
+            "" if smaller else f"memory_mb={got}，直接相加={naive} —— 去重没生效？",
+        )
+    else:
+        same = abs(got - naive) <= 0.5
+        check(
+            "没有重复指向时，自启占用等于直接相加",
+            same,
+            "" if same else f"memory_mb={got}，直接相加={naive}",
+        )
+    check("自启占用不为负", got >= 0, "" if got >= 0 else f"读到 {got}")
+
+
 def main() -> int:
     print("端到端自检")
     check_bad_arguments()
@@ -976,6 +1026,7 @@ def main() -> int:
     check_move_mode_round_trip()
     check_no_syntax_warnings()
     check_page_reads_only_real_fields()
+    check_autostart_memory_is_deduped()
     check_readme_test_count()
     check_python39_syntax()
     print()

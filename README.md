@@ -236,9 +236,11 @@ python -m pcxray off 名字 --force       # 允许改服务（默认只给建议
 | 命令 | 键 | 含义 |
 |---|---|---|
 | `list --json` | `ram.physical_total_mb` / `ram.physical_available_mb` | 物理内存总量 / 可用（MB） |
-| `list --json` | `autostart.memory_mb` | 这些自启项指向的程序现在一共占多少 MB |
+| `list --json` | `autostart.memory_mb` | 启用中的自启项对应的**运行中进程**去重后的合计（同一个进程被两条自启项指向只算一次） |
 | `ram --json` | `total_mb` | **所有程序占用之和**（不是物理内存，别混） |
 | `ram --json` | `groups` / `hidden_by_limit` | 给出来的分组 / 被截掉多少 |
+
+> `autostart.memory_mb` 和 `items[].running_mb` 不是一回事：后者是「这条指向的程序现在占多少」，同一个 exe 被两条自启项指向时会各算一份，**直接加起来会虚高**（本机 Edge 就是两条，直接相加 685.9 MB，去重后 405.1 MB）。要自己算合计，请按 `exe` 去重。
 
 `list --json` 剩下的顶层键：
 
