@@ -394,6 +394,39 @@ class TestNoUnescapedInterpolation(unittest.TestCase):
         self.assertNotIn('onclick="toggle(', web._PAGE)
 
 
+class TestPortHandling(unittest.TestCase):
+    """端口被占时要说人话，而且别白扫一遍。
+
+    以前 `serve()` 先扫描（约 3 秒）再绑端口 —— 端口冲突时用户等了三秒才被告知
+    「起不来」，而且扫描结果直接扔掉。
+    """
+
+    def test_reuse_address_is_off_on_windows(self):
+        # Windows 上 SO_REUSEADDR 允许别的进程抢绑同一个端口。这个接口能关自启项，
+        # 端口被抢走就等于被人替你做决定。
+        if winapi.IS_WINDOWS:
+            self.assertFalse(web._Server.allow_reuse_address)
+        else:
+            self.assertTrue(web._Server.allow_reuse_address)
+
+    def test_occupied_port_fails_before_scanning(self):
+        import socket
+
+        holder = socket.socket()
+        holder.bind(("127.0.0.1", 0))
+        port = holder.getsockname()[1]
+        holder.listen(1)
+        self.addCleanup(holder.close)
+        scanned = []
+        with mock.patch.object(web, "_snapshot", lambda **kw: scanned.append(1) or None):
+            code = web.serve(port=port, open_browser=False)
+        self.assertEqual(code, 1)
+        self.assertEqual(scanned, [], "端口都起不来，不该先去扫描")
+
+    def test_daemon_threads_so_one_stuck_request_does_not_block_exit(self):
+        self.assertTrue(web._Server.daemon_threads)
+
+
 class TestBindAddress(unittest.TestCase):
     def test_only_loopback(self):
         server = web.make_server(0)

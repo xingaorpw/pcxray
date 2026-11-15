@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 
 from . import safety
@@ -133,25 +134,56 @@ def _delete_value(hive: str, subkey: str, name: str) -> None:
 # ------------------------------------------------------------------ 备份
 
 
+def _reserve_backup_path(stamp: str) -> str:
+    """原子地占住一个不重名的备份文件名。
+
+    以前是「先 `os.path.exists` 判重、再写」，两步之间没有原子性：网页上
+    两个请求在同一秒到达时，都会看到「不存在」，然后抢同一个 `.tmp`，
+    第二个直接 `WinError 32 另一个程序正在使用此文件` —— 用户看到的是
+    「备份写不进去，已中止」，而实际上什么也没改。
+
+    改成 `O_CREAT|O_EXCL`：创建成功才算占到，失败就换下一个序号。
+    """
+    suffix = 0
+    while True:
+        name = f"{stamp}.json" if suffix == 0 else f"{stamp}-{suffix}.json"
+        path = os.path.join(BACKUP_DIR, name)
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            suffix += 1
+            if suffix > 999:
+                raise OSError(f"备份文件名连续撞名一千次，放弃：{path}") from None
+            continue
+        os.close(fd)
+        return path
+
+
 def _save_backup(ops: list[dict]) -> str:
     os.makedirs(BACKUP_DIR, exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    path = os.path.join(BACKUP_DIR, f"{stamp}.json")
-    suffix = 1
-    while os.path.exists(path):
-        suffix += 1
-        path = os.path.join(BACKUP_DIR, f"{stamp}-{suffix}.json")
+    path = _reserve_backup_path(stamp)
     payload = {
         "created": time.strftime("%Y-%m-%d %H:%M:%S"),
         "version": 1,
         "ops": ops,
     }
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as handle:
-        json.dump(payload, handle, ensure_ascii=False, indent=2)
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(tmp, path)
+    # tmp 名字必须唯一，否则并发时两个线程写同一个 .tmp 又会撞车
+    tmp = f"{path}.{os.getpid()}-{threading.get_ident()}.tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, indent=2)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        # 半截的 tmp 不能留下，否则看起来像一份备份
+        for leftover in (tmp,):
+            try:
+                os.remove(leftover)
+            except OSError:
+                pass
+        raise
     return path
 
 

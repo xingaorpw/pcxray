@@ -159,6 +159,43 @@ class TestBackupFiles(unittest.TestCase):
         listed = actions.list_backups()
         self.assertEqual(listed, sorted(listed, reverse=True))
 
+    def test_parallel_saves_all_get_unique_files(self):
+        """同一秒里 12 个请求同时要备份，不能有两个抢到同一个文件。
+
+        网页是多线程的。以前「先 exists 判重、再写 .tmp」两步之间没有原子性：
+        并发时第二个请求报 `WinError 32 另一个程序正在使用此文件`，用户看到
+        「备份写不进去，已中止」—— 明明什么都没改，却被吓一跳。
+        """
+        import threading
+
+        paths: list[str] = []
+        errors: list[BaseException] = []
+        lock = threading.Lock()
+
+        def worker(i):
+            try:
+                got = actions._save_backup([{"kind": "flag", "name": f"x{i}"}])
+            except BaseException as exc:  # noqa: BLE001
+                with lock:
+                    errors.append(exc)
+                return
+            with lock:
+                paths.append(got)
+
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(12)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        self.assertEqual(errors, [], f"并发写备份报错了：{errors}")
+        self.assertEqual(len(paths), 12)
+        self.assertEqual(len(set(paths)), 12, "有两个请求拿到了同一个备份路径")
+        # 每个都必须是完整可读的 JSON，不能是半截
+        for path in paths:
+            with open(path, encoding="utf-8") as handle:
+                self.assertIn("ops", json.load(handle))
+
 
 class TestRestoreEdge(unittest.TestCase):
     def test_missing_backup_reports_clearly(self):

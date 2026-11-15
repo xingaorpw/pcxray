@@ -347,7 +347,10 @@ class _Server(ThreadingHTTPServer):
     """
 
     daemon_threads = True
-    allow_reuse_address = True
+    # Windows 上 SO_REUSEADDR 的语义和 Unix 不同：它允许**别的进程**绑同一个
+    # 端口把你的请求接走。这个接口能关自启项，端口被抢走就等于被人替你做决定。
+    # 所以 Windows 上必须关掉，冲突时老老实实报错。
+    allow_reuse_address = not winapi.IS_WINDOWS
 
     def __init__(self, address, handler):
         super().__init__(address, handler)
@@ -362,13 +365,15 @@ def serve(port: int = 0, open_browser: bool = True) -> int:
     if not winapi.IS_WINDOWS:
         print("pcxray 只能在 Windows 上运行。")
         return 2
-    print("  正在扫描，稍等（计划任务和服务要调 PowerShell，约 3 秒）…")
-    _snapshot(force=True)
+    # 先占端口再扫描。反过来的话端口冲突时要白等三秒扫描，然后才告诉你起不来。
     try:
         server = make_server(port)
     except OSError as exc:
         print(f"  端口 {port} 起不来：{exc}")
+        print("  换一个端口，或者用 --port 0 让系统随便挑一个（默认就是这样）")
         return 1
+    print("  正在扫描，稍等（计划任务和服务要调 PowerShell，约 3 秒）…")
+    _snapshot(force=True)
     host, real_port = server.server_address[:2]
     url = f"http://{host}:{real_port}/"
     print("")
