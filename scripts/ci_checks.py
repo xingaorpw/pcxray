@@ -452,6 +452,9 @@ def check_autostart_reconciliation() -> None:
 
     非 Windows 上直接跳过（这些来源本来就不存在）。
     """
+    import json
+    import subprocess
+    import sys
     import winreg
 
     from pcxray import autostart, pwsh, winapi
@@ -476,6 +479,8 @@ def check_autostart_reconciliation() -> None:
             for leaf in ("Run", "RunOnce"):
                 canonical.append((hive, middle + "\\Microsoft\\Windows\\CurrentVersion\\" + leaf))
     scanned = {(hive, subkey): label for hive, subkey, _s, _k, label in autostart.RUN_KEYS}
+    raw_registry_total = 0  # 系统里实际有多少个值（规格侧的基准）
+    registry_skipped = 0  # 其中不是字符串、Windows 不会执行的
     for hive_name, subkey in canonical:
         label = scanned.get((hive_name, subkey))
         if not label:
@@ -501,14 +506,51 @@ def check_autostart_reconciliation() -> None:
             not unexplained,
             "漏了：" + "、".join(sorted(unexplained)[:3]) if unexplained else "",
         )
+        # 记下系统里的真实值个数：后面 --include 的条数要用它当基准，
+        # 不能用扫描结果自己算 —— 扫描漏了什么，两边会一起少（试过）。
+        raw_registry_total += len(raw)
+        registry_skipped += len(missing) - len(unexplained)
 
     # ---- 启动文件夹
+    raw_folder_total = 0
     for scope, folder, label in autostart._startup_dirs():
         if not os.path.isdir(folder):
             continue
         raw = {n for n in os.listdir(folder) if n.lower() != "desktop.ini"}
         got = by_source.get(label, set())
         check(f"启动文件夹对账 · {label}", raw == got, f"系统有 {len(raw)} 个，报了 {len(got)} 个")
+        raw_folder_total += len(raw)
+
+    # ---- --include 不许漏也不许重
+    # 这四个来源加起来必须正好等于不加 --include 时的条数。只跑快的两个
+    # （注册表、启动文件夹），计划和服务的总数上面已经和系统对过账了。
+    # 基准来自系统侧（winreg / os.listdir），不是扫描结果 —— 扫描漏了什么，
+    # 拿扫描结果当基准的话两边会一起少，检查就永远是绿的。
+    expected_total = {
+        "registry": raw_registry_total - registry_skipped,
+        "folders": raw_folder_total,
+    }
+    for include in ("registry", "folders"):
+        done = subprocess.run(
+            [sys.executable, "-m", "pcxray", "list", "--json", "--limit", "0", "--include", include],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        if done.returncode != 0:
+            check(f"--include {include} 能跑", False, done.stderr[-160:])
+            continue
+        try:
+            got = json.loads(done.stdout)["autostart"]["total"]
+        except (json.JSONDecodeError, KeyError) as exc:
+            check(f"--include {include} 是合法 JSON", False, str(exc)[:120])
+            continue
+        want = expected_total[include]
+        check(
+            f"--include {include} 条数对得上",
+            got == want,
+            f"报了 {got} 条，系统里这一类有 {want} 条" if got != want else f"{got} 条",
+        )
 
     # ---- 计划任务（登录/开机触发）
     ok, task_out, task_err = pwsh.run_text(

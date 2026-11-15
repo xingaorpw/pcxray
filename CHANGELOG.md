@@ -25,6 +25,12 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **`--include` 的条数没人对过账。** 现在 `ci_checks` 会把 `--include registry` /
+  `--include folders` 的条数和**系统侧**的真实个数比（winreg 直接读值、
+  `os.listdir` 直接数文件），不是拿扫描结果自比。实测 22 / 1，四个来源加起来
+  正好 183。写这条检查时又踩了同一个坑：第一版拿 `scan()` 的结果当基准，
+  于是我在 `scan()` 里故意漏掉 runonce，两边一起少，检查照样全绿 —— 改成
+  用系统侧基准之后立刻报「报了 16 条，系统里这一类有 22 条」。
 - **`--json` 的时间戳没写单位和纪元，大半字段没写进文档。** `boot` / `logon` 是
   裸数字，谁也不知道是 Unix 秒、毫秒还是 Windows FILETIME。现在 README 把
   `list --json` 的每个顶层键都写清楚了（`boot`/`logon` 明确是 Unix 秒），
