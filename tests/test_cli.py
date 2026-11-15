@@ -387,6 +387,74 @@ class TestMainDispatch(unittest.TestCase):
         elevate.assert_not_called()
 
 
+class TestUndoHintIsCopyPasteable(unittest.TestCase):
+    """`off` 之后打出来的那句「反悔就运行：pcxray restore "..."」必须真能用。
+
+    这是用户唯一的退路。路径打错一个字符、或者引号没包好，用户就复制粘贴
+    一堆报错 —— 而这段输出以前一条测试都没有（覆盖率里 L296-297 是空的）。
+    """
+
+    def _entry(self):
+        return autostart.Entry(
+            name="OneDrive",
+            kind="run",
+            source="注册表 · 当前用户 Run",
+            scope="user",
+            locator={"hive": "HKCU", "subkey": "X", "value": "OneDrive"},
+        )
+
+    def _off(self, backup, dry_run=False):
+        out = io.StringIO()
+        argv = ["off", "OneDrive"] + (["--dry-run"] if dry_run else [])
+        with mock.patch.object(cli.autostart, "scan", return_value=([self._entry()], [])), mock.patch.object(
+            cli.actions, "disable", return_value=([actions.Result("OneDrive", True, "已关")], backup)
+        ), contextlib.redirect_stdout(out):
+            code = cli.main(argv)
+        return code, out.getvalue()
+
+    def test_hint_contains_the_real_backup_path(self):
+        backup = r"C:\Users\me\.pcxray\backup\20260101-000000.json"
+        code, out = self._off(backup)
+        self.assertEqual(code, 0)
+        self.assertIn("备份已写入", out)
+        self.assertIn(f'pcxray restore "{backup}"', out, f"提示里没给出可用的还原命令：{out}")
+
+    def test_the_printed_command_is_accepted_by_the_parser(self):
+        backup = r"C:\Users\me\.pcxray\backup\20260101-000000.json"
+        _code, out = self._off(backup)
+        line = [l for l in out.split("\n") if "pcxray restore" in l][0]
+        # 把提示里那条命令原样喂回命令行解析器
+        command = line.split("pcxray restore", 1)[1].strip().strip('"')
+        parsed = cli.build_parser().parse_args(["restore", command])
+        self.assertEqual(parsed.backup, backup, f"照着提示敲，解析出来的路径不对：{parsed.backup}")
+
+    def test_dry_run_prints_no_backup_and_no_reboot_hint(self):
+        code, out = self._off("", dry_run=True)
+        self.assertEqual(code, 0)
+        self.assertNotIn("备份已写入", out, f"演练不该说写了备份：{out}")
+        self.assertNotIn("重启后生效", out, f"演练不该说重启后生效：{out}")
+
+    def test_success_says_restart_takes_effect(self):
+        code, out = self._off("C:\\b.json")
+        self.assertEqual(code, 0)
+        self.assertIn("重启后生效", out, f"办成了却没说什么时候生效：{out}")
+
+
+class TestPruneOutput(unittest.TestCase):
+    """删了 7 份要能看出来「还有 2 份没列」。"""
+
+    def test_more_than_five_removals_says_how_many_more(self):
+        removed = [f"C:\\b\\2026010{i}-000000.json" for i in range(1, 8)]
+        out = io.StringIO()
+        with mock.patch.object(cli.actions, "prune", return_value=(removed, 3, 1024 * 1024)), \
+                contextlib.redirect_stdout(out):
+            code = cli.main(["prune", "--keep", "3"])
+        self.assertEqual(code, 0)
+        text = out.getvalue()
+        self.assertIn("已删掉 7 份", text, text)
+        self.assertIn("还有 2 份", text, f"删了 7 份只列 5 份，却没说还有几份：{text}")
+
+
 class TestCommandWiring(unittest.TestCase):
     """on / restore / backups / list --json 这几条命令行以前没有过 CLI 级测试。
 
