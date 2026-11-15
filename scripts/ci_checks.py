@@ -515,14 +515,27 @@ def check_autostart_reconciliation() -> None:
         except FileNotFoundError:
             raw = set()
         got = by_source.get(label, set())
+        got_names = [e.name for e in entries if e.source == label]
         missing = raw - got
         # 非字符串的值本来就不会被列出来，但它会在 problems 里点名 —— 那不算漏
         unexplained = {n for n in missing if not any(f"「{n}」" in p for p in problems)}
-        check(
-            f"注册表对账 · {label}",
-            not unexplained,
-            "漏了：" + "、".join(sorted(unexplained)[:3]) if unexplained else "",
-        )
+        # 反向也得查：报了系统里没有的名字（比如串了标签），用户会看到一条
+        # 点不动的幽灵条目。以前只查「漏了」，多报的东西一声不响。
+        extra = got - raw
+        # 比 set 更狠的一刀：同一条报两遍在 set 里看不出来，界面上却是两行。
+        dupes = sorted({n for n in got_names if got_names.count(n) > 1})
+        skipped_here = len(missing) - len(unexplained)
+        counted = len(got_names) + skipped_here == len(raw)
+        trouble = []
+        if unexplained:
+            trouble.append("漏了：" + "、".join(sorted(unexplained)[:3]))
+        if extra:
+            trouble.append("多报了：" + "、".join(sorted(extra)[:3]))
+        if dupes:
+            trouble.append("重复了：" + "、".join(dupes[:3]))
+        if not counted:
+            trouble.append(f"系统有 {len(raw)} 个，报了 {len(got_names)} 个（跳过 {skipped_here} 个）")
+        check(f"注册表对账 · {label}", not trouble, "；".join(trouble))
         # 记下系统里的真实值个数：后面 --include 的条数要用它当基准，
         # 不能用扫描结果自己算 —— 扫描漏了什么，两边会一起少（试过）。
         raw_registry_total += len(raw)
@@ -537,7 +550,18 @@ def check_autostart_reconciliation() -> None:
             continue
         raw = {n for n in os.listdir(folder) if n.lower() != "desktop.ini"}
         got = by_source.get(label, set())
-        check(f"启动文件夹对账 · {label}", raw == got, f"系统有 {len(raw)} 个，报了 {len(got)} 个")
+        got_names = [e.name for e in entries if e.source == label]
+        dupes = sorted({n for n in got_names if got_names.count(n) > 1})
+        trouble = []
+        if raw != got:
+            trouble.append(f"系统有 {len(raw)} 个，报了 {len(got)} 个")
+            if got - raw:
+                trouble.append("多报了：" + "、".join(sorted(got - raw)[:3]))
+            if raw - got:
+                trouble.append("漏了：" + "、".join(sorted(raw - got)[:3]))
+        if dupes:
+            trouble.append("重复了：" + "、".join(dupes[:3]))
+        check(f"启动文件夹对账 · {label}", not trouble, "；".join(trouble))
         raw_folder_total += len(raw)
 
     # ---- --include 不许漏也不许重
