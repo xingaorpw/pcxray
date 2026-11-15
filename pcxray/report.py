@@ -169,8 +169,12 @@ class Report:
             "logon": self.logon,
             "boot": self.boot,
             "ram": {
-                "total": self.total_ram,
-                "available": self.avail_ram,
+                # 名字里带单位，而且不能和 `ram --json` 的 `total_mb` 撞名 ——
+                # 那个是「所有程序占用之和」，这里是「物理内存总量」，两个完全
+                # 不同的量。以前这里叫 `total`/`available`（还是字节），谁都没
+                # 说清楚过。
+                "physical_total_mb": round(self.total_ram / 1048576, 1),
+                "physical_available_mb": round(self.avail_ram / 1048576, 1),
             },
             "process_count": self.process_count,
             "unreadable_processes": self.unreadable,

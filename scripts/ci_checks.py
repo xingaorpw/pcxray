@@ -574,6 +574,65 @@ def check_page_js_reports_scan_failure() -> None:
     )
 
 
+def check_json_memory_keys() -> None:
+    """内存数字的 JSON 契约：同名的量必须同含义，不同含义不许同名。
+
+    以前 `list --json` 的 `ram` 是 `{total, available}`（字节，没说单位），
+    `ram --json` 的 `total_mb` 是「所有程序占用之和」—— 两个完全不同的量，
+    一个说字节一个说 MB，脚本照着写就是 null 或者差 1e6 倍。
+    """
+    import json
+    import subprocess
+    import sys
+
+    def run_json(args: list[str]) -> dict | None:
+        done = subprocess.run(
+            [sys.executable, "-m", "pcxray"] + args,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        if done.returncode != 0:
+            check(f"{' '.join(args)} 能跑", False, done.stderr[-200:])
+            return None
+        try:
+            return json.loads(done.stdout)
+        except json.JSONDecodeError as exc:
+            check(f"{' '.join(args)} 是合法 JSON", False, str(exc)[:120])
+            return None
+
+    payload = run_json(["list", "--json", "--limit", "0"])
+    if payload is None:
+        return
+    block = payload.get("ram") or {}
+    check(
+        "list --json 的物理内存键名带单位",
+        set(block) == {"physical_total_mb", "physical_available_mb"},
+        f"实际是 {sorted(block)}",
+    )
+    total = block.get("physical_total_mb") or 0
+    avail = block.get("physical_available_mb") or 0
+    check("物理内存是合理的 MB 数", 0 < total < 1_000_000, f"读到 {total}")
+    check("可用不超过总量", 0 <= avail <= total, f"可用 {avail} / 总量 {total}")
+
+    ram_payload = run_json(["ram", "--json", "--limit", "0"])
+    if ram_payload is None:
+        return
+    groups = ram_payload.get("groups") or []
+    want = ram_payload.get("total_mb")
+    got = sum(g.get("mb", 0) for g in groups)
+    check(
+        "ram --json 的 total_mb = 各程序之和",
+        abs(want - got) <= 0.1,
+        f"total_mb={want} 求和={round(got, 1)}",
+    )
+    check(
+        "两处的 total 不撞名",
+        "total_mb" not in block,
+        f"list 的 ram 键：{sorted(block)}",
+    )
+
+
 def main() -> int:
     print("端到端自检")
     check_bad_arguments()
@@ -586,6 +645,7 @@ def main() -> int:
     check_json_contract()
     check_autostart_reconciliation()
     check_page_js_reports_scan_failure()
+    check_json_memory_keys()
     check_readme_test_count()
     check_python39_syntax()
     print()

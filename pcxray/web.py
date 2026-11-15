@@ -129,10 +129,10 @@ function draw(){
   const a=DATA.autostart;
   document.getElementById("sub").textContent=
     `扫描于 ${DATA.generated}　进程 ${DATA.process_count} 个　自启 ${a.total} 条`;
-  const total=DATA.ram.total, avail=DATA.ram.available;
+  const total=DATA.ram.physical_total_mb, avail=DATA.ram.physical_available_mb;
   document.getElementById("stats").innerHTML=
-    stat("物理内存", total?mb(total/1048576):"未知")+
-    stat("已用", total?mb((total-avail)/1048576):"—")+
+    stat("物理内存", total?total.toFixed(1)+" MB":"未知")+
+    stat("已用", total?(total-avail).toFixed(1)+" MB":"—")+
     stat("自启项现在占着", mb(a.memory_mb))+
     stat("启用 / 已禁用", `${a.enabled} / ${a.disabled}`);
   let items=a.items.filter(i=>{

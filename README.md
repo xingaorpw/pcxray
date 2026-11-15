@@ -231,6 +231,15 @@ python -m pcxray off 名字 --force       # 允许改服务（默认只给建议
 
 `--json` 的 `total` 是「命中多少」，`items` 是给出来的那一段，被截掉多少写在 `hidden_by_limit` 里 —— 脚本能一眼看出有没有少数据。
 
+两个命令的 JSON 各管一件事，键名不会互相打架：
+
+| 命令 | 键 | 含义 |
+|---|---|---|
+| `list --json` | `ram.physical_total_mb` / `ram.physical_available_mb` | 物理内存总量 / 可用（MB） |
+| `list --json` | `autostart.memory_mb` | 这些自启项指向的程序现在一共占多少 MB |
+| `ram --json` | `total_mb` | **所有程序占用之和**（不是物理内存，别混） |
+| `ram --json` | `groups` / `hidden_by_limit` | 给出来的分组 / 被截掉多少 |
+
 `--kind` 只认 `run` / `run32` / `runonce` / `folder` / `task` / `service`，`--include` 只认 `registry` / `folders` / `tasks` / `services`。**写错会当场报错退出**，不会静默给你一份「这一类没有条目」的空报告。
 
 ### 清掉旧备份

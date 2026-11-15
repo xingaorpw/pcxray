@@ -25,6 +25,14 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **`--json` 里两个不同的量撞了名，单位还不同。** `list --json` 的 `ram` 是
+  `{total, available}`（字节，键名没说单位），`ram --json` 的 `total_mb` 是
+  「所有程序占用之和」。同一个工具，同一个词，两个含义，两种单位 —— 脚本照着
+  一个写、读另一个就是 null，或者差 1e6 倍。现在 `list --json` 用
+  `ram.physical_total_mb` / `ram.physical_available_mb`（明确是物理内存、明确是
+  MB），`ram --json` 的 `total_mb` 保持不变并在 README 里写清是「所有程序之和」。
+  ci_checks 加了检查：两处不许撞名、可用不许超过总量、`total_mb` 必须等于各
+  分组之和（反证过：把键名改回 `total`/`available` 立刻红）。
 - **网页的扫描一炸，页面就只剩「扫描失败：TypeError: Failed to fetch」。** 后端
   `/api/report` 里没有接异常，`_snapshot` 一抛，连接被 socketserver 直接掐断，
   浏览器拿到的不是 500 而是「对面挂了」。用户看到 `Failed to fetch` 完全不知道
