@@ -1077,6 +1077,15 @@ def check_dry_run_writes_nothing() -> None:
         )
         return done.returncode, done.stdout + done.stderr
 
+    # 上一次要是被强杀留下残骸，这一轮会莫名其妙地失败 —— 先清一遍。
+    for subkey in (run_key, run_key + "-pcxray-disabled"):
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, subkey, 0, winreg.KEY_SET_VALUE) as handle:
+                winreg.DeleteValue(handle, name)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
     with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, run_key) as handle:
         winreg.SetValueEx(handle, name, 0, winreg.REG_SZ, r"C:\Windows\SysWOW64\notepad.exe")
     try:
@@ -1119,11 +1128,27 @@ def check_dry_run_writes_nothing() -> None:
                 "" if not silent else "这些没说：" + "、".join(silent[:3]),
             )
     finally:
-        try:
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, run_key, 0, winreg.KEY_SET_VALUE) as handle:
-                winreg.DeleteValue(handle, name)
-        except FileNotFoundError:
-            pass
+        # 清理必须覆盖「被挪走的那个键」和三个开关栏位 —— 反证时 dry_run 被短路，
+        # 值真被挪进了 Run-pcxray-disabled，而清理只删了 Run，探针就留在那儿，
+        # 后面每一轮对账都多一条（试过）。
+        for subkey in (run_key, run_key + "-pcxray-disabled"):
+            try:
+                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, subkey, 0, winreg.KEY_SET_VALUE) as handle:
+                    winreg.DeleteValue(handle, name)
+            except FileNotFoundError:
+                pass
+            except OSError:
+                pass
+        for column in ("Run", "Run32", "StartupFolder"):
+            try:
+                with winreg.OpenKey(
+                    winreg.HKEY_CURRENT_USER, approved + "\\" + column, 0, winreg.KEY_SET_VALUE
+                ) as handle:
+                    winreg.DeleteValue(handle, name)
+            except FileNotFoundError:
+                pass
+            except OSError:
+                pass
 
 
 def main() -> int:

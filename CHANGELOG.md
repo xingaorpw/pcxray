@@ -25,6 +25,11 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **演练检查自己的清理不干净，会把探针留在注册表里。** 反证时 dry_run 被短路，
+  值真被挪进了 `Run-pcxray-disabled`，而清理只删了 `Run` —— 探针留在那儿，
+  之后每一轮对账都多一条（`--kind run32 报了 1 条，系统里这一类有 0 条`）。
+  现在建探针之前先清一遍，收尾时把 `Run`、`Run-pcxray-disabled` 和三个
+  `StartupApproved` 栏位全扫一遍。
 - **`--dry-run` 的「一个字节都不改」以前只手工试过一次。** 这是整个工具的
   安全承诺：加了 `--dry-run` 就只说不做。现在 ci_checks 会写一个探针，把
   8 个 Run 位置和 3 个 StartupApproved 栏位全抄一遍，跑
