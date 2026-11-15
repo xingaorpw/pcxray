@@ -651,6 +651,31 @@ def restore(path: str = "", dry_run: bool = False) -> tuple[list[Result], str]:
     if not ops:
         return [Result("（还原）", False, f"这份备份里没有任何要还原的东西：{path}")], path
     results: list[Result] = []
+    version = payload.get("version")
+    if version not in (None, 1):
+        # 未来的格式可能多出这一版不认识的字段。硬按 v1 的规矩还原，等于拿
+        # 一份看不懂的说明书去改用户的注册表 —— 至少要说一声。
+        results.append(
+            Result("（还原）", True, f"这份备份标的是 v{version} 格式，这个版本只认 v1，可能读不全")
+        )
+    known = ("flag", "move", "task", "service")
+    usable = [op for op in ops if op.get("kind") in known]
+    unknown = [op for op in ops if op.get("kind") not in known]
+    if not usable:
+        # 一条都认不出来就别报告「已还原」—— 用户会以为注册表回去了
+        kinds = sorted({str(op.get("kind") or "(缺失)") for op in unknown})
+        detail = f"（{len(unknown)} 条不认识的格式：{'、'.join(kinds)}）" if unknown else ""
+        return results + [
+            Result("（还原）", False, f"这份备份里没有这个版本能还原的内容{detail}，没法还原：{path}")
+        ], path
+    for op in unknown:
+        results.append(
+            Result(
+                op.get("name", "?"),
+                False,
+                f"这一条的格式（kind={op.get('kind')}）这个版本不认识，跳过了",
+            )
+        )
     if skipped:
         # 说清楚「用的是哪一份、跳过了哪些」，不然用户会以为还原的是最新的
         results.append(
@@ -661,7 +686,7 @@ def restore(path: str = "", dry_run: bool = False) -> tuple[list[Result], str]:
                 + ("……" if len(skipped) > 3 else ""),
             )
         )
-    for op in ops:
+    for op in usable:
         name = op.get("name", "?")
         if dry_run:
             results.append(Result(name, True, "（演练）将还原"))

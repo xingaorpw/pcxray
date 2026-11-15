@@ -324,6 +324,69 @@ class TestRestoreSkipsUnusableBackups(unittest.TestCase):
         self.assertFalse(actions._backup_is_usable(os.path.join(self._dir.name, "nope.json")))
 
 
+class TestRestoreRefusesWhatItCannotRead(unittest.TestCase):
+    """认不出来的东西不能报「已还原」。
+
+    备份可能是新版本 pcxray 写的、被手改过、从别的机器拷来的。以前不认识
+    `kind` 就直接跳过，一条都没还成也照样退出 0 —— 用户以为注册表回去了。
+    """
+
+    def setUp(self):
+        self._dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._dir.cleanup)
+        patcher = mock.patch.object(actions, "BACKUP_DIR", self._dir.name)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _write(self, payload) -> str:
+        path = os.path.join(self._dir.name, "20260101-000000.json")
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle)
+        return path
+
+    def test_unknown_kind_is_a_clean_failure(self):
+        path = self._write({"version": 1, "ops": [{"kind": "future_thing", "name": "Z"}]})
+        results, _ = actions.restore(path, dry_run=True)
+        self.assertEqual(len(results), 1)
+        self.assertFalse(results[0].ok)
+        self.assertIn("没有这个版本能还原的内容", results[0].message)
+
+    def test_missing_kind_does_not_crash(self):
+        # 以前会 KeyError：`op["kind"] in (...)` 直接抛
+        path = self._write({"version": 1, "ops": [{"name": "Z"}]})
+        results, _ = actions.restore(path, dry_run=True)
+        self.assertFalse(results[0].ok)
+        self.assertIn("没有这个版本能还原的内容", results[0].message)
+
+    def test_mixed_backup_reports_the_unknown_one(self):
+        path = self._write(
+            {
+                "version": 1,
+                "ops": [
+                    {"kind": "future_thing", "name": "Z"},
+                    {"kind": "task", "name": "T", "task": "T", "path": "\\", "was_enabled": False},
+                ],
+            }
+        )
+        results, _ = actions.restore(path, dry_run=False)
+        bad = [r for r in results if not r.ok]
+        self.assertEqual(len(bad), 1)
+        self.assertIn("future_thing", bad[0].message)
+        # 认识的那条还是要办
+        self.assertTrue(any("原本就是禁用状态" in r.message for r in results))
+
+    def test_future_version_warns_but_still_restores(self):
+        path = self._write(
+            {
+                "version": 99,
+                "ops": [{"kind": "task", "name": "T", "task": "T", "path": "\\", "was_enabled": False}],
+            }
+        )
+        results, _ = actions.restore(path, dry_run=True)
+        self.assertTrue(any("v99" in r.message and "只认 v1" in r.message for r in results))
+        self.assertTrue(any("将还原" in r.message for r in results))
+
+
 class TestPruneKeepsTheNewest(unittest.TestCase):
     """备份会无限长。只留最近的若干份，而且只碰自己的目录。"""
 

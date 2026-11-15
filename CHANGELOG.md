@@ -25,6 +25,13 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **还原会假装还原它看不懂的东西。** 备份里出现这个版本不认识的 `kind`（新版本
+  写的、手改过、从别的机器拷来的），以前一条都还不了也照样退出 0，用户以为注册表
+  回去了；`kind` 缺失时更会直接 `KeyError` 打出一屏 traceback。现在会报「这份备份
+  里没有这个版本能还原的内容（N 条不认识的格式：xxx）」，混合备份里认识的照办、
+  不认识的单列一条失败。`version` 不是 1 时会提醒「只认 v1，可能读不全」。
+- **`pcxray web` 起不来时错误信息写在 stdout。** 脚本重定向 stdout 就看不见了。
+  改走 stderr。
 - **备份只增不减，没有任何入口能清。** 每次改自启项存一份，本机已经攒了 337 份
   `2026xxxx-xxxxxx.json`，全在用户主目录里。新增 `pcxray prune --keep 20`
   （`--dry-run` 先看要删哪些），只删自己目录里的 `.json`，`--keep` 小于 1 直接拒绝。

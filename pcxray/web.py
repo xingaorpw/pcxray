@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import secrets
+import sys
 import threading
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -367,14 +368,15 @@ def make_server(port: int = 0) -> _Server:
 
 def serve(port: int = 0, open_browser: bool = True) -> int:
     if not winapi.IS_WINDOWS:
-        print("pcxray 只能在 Windows 上运行。")
+        print("pcxray 只能在 Windows 上运行。", file=sys.stderr)
         return 2
     # 先占端口再扫描。反过来的话端口冲突时要白等三秒扫描，然后才告诉你起不来。
     try:
         server = make_server(port)
     except OSError as exc:
-        print(f"  端口 {port} 起不来：{exc}")
-        print("  换一个端口，或者用 --port 0 让系统随便挑一个（默认就是这样）")
+        # 失败信息走 stderr：脚本会重定向 stdout，把错误混进正常输出里看不见
+        print(f"  端口 {port} 起不来：{exc}", file=sys.stderr)
+        print("  换一个端口，或者用 --port 0 让系统随便挑一个（默认就是这样）", file=sys.stderr)
         return 1
     print("  正在扫描，稍等（计划任务和服务要调 PowerShell，约 3 秒）…")
     _snapshot(force=True)
