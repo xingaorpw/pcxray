@@ -25,6 +25,16 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **「`--dry-run` 一个字节都不改」这条检查，尺子本身可能是瞎的。** 它靠对比
+  注册表快照前后是否相同。实测：把快照里 `StartupApproved` 那一段删掉，让尺子
+  看不见 `off` 真正写的地方，**这条检查照样绿** —— 用户注册表被改了，结论还是
+  「一个字节都没变」。现在先故意往 `StartupApproved\Run32` 写一个标记再删掉，
+  证明快照看得见那个位置，然后才拿它当尺子。反证过：阉掉快照 → 新检查红，
+  而老的「没变」依旧绿（正好说明它原本是瞎的）。
+- **「零依赖」这条检查也没证明过自己。** 现在先证明两件事再干活：`import x`
+  和 `from x import y` 两种写法都扫得出来（实测把 `from` 分支去掉 → 红），
+  `site-packages` 里的模块必须判成第三方（实测把判断阉掉 → 红）。再往产品
+  代码里塞 `import yaml`，实测红。
 - **「不许用 3.10+」这条检查，`from X import Y` 写法能溜过去。** 它原来是一串
   正则，只认 `itertools.pairwise` 这种点号写法；`from datetime import UTC`、
   `from typing import Self`、`from enum import StrEnum` 全部漏网。改成 AST

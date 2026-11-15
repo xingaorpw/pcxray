@@ -1106,6 +1106,32 @@ def check_dry_run_writes_nothing() -> None:
         winreg.SetValueEx(handle, name, 0, winreg.REG_SZ, r"C:\Windows\SysWOW64\notepad.exe")
     try:
         before = snapshot()
+        # 这把尺子自己得先量得出东西来。`off` 真正写的是
+        # `StartupApproved\Run32\<名字>`，而「演练前后一模一样」这句结论
+        # 只有在快照**看得见那个位置**时才成立 —— 否则快照漏一栏，检查照样绿，
+        # 用户的注册表却被改了。这里故意写一个标记再删掉，证明它看得见。
+        probe_seen = False
+        try:
+            with winreg.CreateKeyEx(
+                winreg.HKEY_CURRENT_USER, approved + "\\Run32", 0, winreg.KEY_SET_VALUE
+            ) as handle:
+                winreg.SetValueEx(handle, name, 0, winreg.REG_BINARY, b"\x03" + b"\x00" * 11)
+            probe_seen = f"approved\\Run32\\{name}" in _registry_snapshot()
+        finally:
+            try:
+                with winreg.OpenKey(
+                    winreg.HKEY_CURRENT_USER, approved + "\\Run32", 0, winreg.KEY_SET_VALUE
+                ) as handle:
+                    winreg.DeleteValue(handle, name)
+            except OSError:
+                pass
+        check(
+            "快照这把尺子看得见 StartupApproved 的变化",
+            probe_seen,
+            "" if probe_seen else "往 StartupApproved\\Run32 写了标记，快照里却没有 —— 后面那句「没变」不可信",
+        )
+        # 刚才那一下是故意改的，重新取一次基准
+        before = snapshot()
         with tempfile.TemporaryDirectory() as home:
             # 探针名字里故意不带 dry —— 上一版叫 pcxray_selftest_dryrun，于是
             # 「输出里有 dry」这条断言被名字本身满足了，等于没查（试过）。
@@ -1216,40 +1242,88 @@ def check_readme_options_exist() -> None:
     )
 
 
+def _imported_top_level_modules(text: str) -> set[str]:
+    """这段代码 import 了哪些顶层模块名。"""
+    import ast
+
+    modules: set[str] = set()
+    for node in ast.walk(ast.parse(text)):
+        if isinstance(node, ast.Import):
+            modules.update(alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            modules.add(node.module.split(".")[0])
+    return modules
+
+
+# 只有 Windows 才有的标准库：Linux/macOS 上 find_spec 找不到，但它们是标准库
+_PLATFORM_STDLIB = {"winreg", "msvcrt", "winsound", "_winapi", "nt", "win32api"}
+
+
+def _import_problem(name: str) -> str:
+    """这个模块名有什么问题。空串 = 没问题。"""
+    import importlib.util
+
+    if name == "__future__" or name in _PLATFORM_STDLIB:
+        return ""
+    stdlib = getattr(sys, "stdlib_module_names", None)
+    if stdlib is not None and name in stdlib:
+        return ""
+    spec = importlib.util.find_spec(name)
+    if spec is None:
+        return "找不到"
+    origin = spec.origin or ""
+    if "site-packages" in origin or "dist-packages" in origin:
+        return "第三方"
+    return ""
+
+
 def check_no_third_party_imports() -> None:
     """`pcxray/` 里不许 import 任何第三方库 —— README 的「零依赖」徽章是承诺。
 
     这个徽章是给人看的卖点：装上就能跑，不用 pip install。要是哪天顺手
     `import requests`，本地跑得好好的（机器上装了），用户那边直接 ImportError。
-    """
-    import ast
-    import importlib.util
 
-    stdlib = getattr(sys, "stdlib_module_names", None)
-    # 只有 Windows 才有的标准库：Linux/macOS 上 find_spec 找不到，但它们是标准库
-    platform_stdlib = {"winreg", "msvcrt", "winsound", "_winapi", "nt", "win32api"}
+    和 3.10+ 那条一样，这条也先证明自己不是瞎的：两种 import 写法都得认出来，
+    `site-packages` 里的模块必须判成第三方，标准库必须放过。
+    """
+    import tempfile
+
+    sample = _imported_top_level_modules(
+        "import requests\nfrom yaml import safe_load\nimport os.path\nfrom . import local\n"
+    )
+    check(
+        "import 扫描认得出两种写法",
+        sample == {"requests", "yaml", "os"},
+        "" if sample == {"requests", "yaml", "os"} else f"扫出来的是 {sorted(sample)}",
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        site = os.path.join(tmp, "site-packages")
+        os.makedirs(site)
+        with open(os.path.join(site, "pcxray_fake_thirdparty.py"), "w", encoding="utf-8") as handle:
+            handle.write("x = 1\n")
+        sys.path.insert(0, site)
+        try:
+            import importlib
+
+            importlib.invalidate_caches()
+            verdict = _import_problem("pcxray_fake_thirdparty")
+        finally:
+            sys.path.remove(site)
+    check(
+        "site-packages 里的模块判成第三方",
+        verdict == "第三方",
+        "" if verdict == "第三方" else f"居然判成「{verdict or '没问题'}」—— 零依赖徽章等于没人守",
+    )
+    check(
+        "标准库不被误判",
+        _import_problem("os") == "" and _import_problem("winreg") == "",
+        "" if _import_problem("os") == "" else "os 被判成有问题",
+    )
     modules: set[str] = set()
     for path in sorted(glob.glob("pcxray/*.py")):
         with open(path, encoding="utf-8") as handle:
-            tree = ast.parse(handle.read(), filename=path)
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                modules.update(alias.name.split(".")[0] for alias in node.names)
-            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
-                modules.add(node.module.split(".")[0])
-    bad: list[str] = []
-    for name in sorted(modules):
-        if name == "__future__" or name in platform_stdlib:
-            continue
-        if stdlib is not None and name in stdlib:
-            continue
-        spec = importlib.util.find_spec(name)
-        if spec is None:
-            bad.append(f"{name}（找不到）")
-            continue
-        origin = spec.origin or ""
-        if "site-packages" in origin or "dist-packages" in origin:
-            bad.append(f"{name}（第三方）")
+            modules |= _imported_top_level_modules(handle.read())
+    bad = [f"{name}（{_import_problem(name)}）" for name in sorted(modules) if _import_problem(name)]
     check(
         "pcxray 只用标准库",
         not bad,
