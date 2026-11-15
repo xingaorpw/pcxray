@@ -25,6 +25,11 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **网页的 XSS 只做了静态检查。** 以前只验「标签闭合」和「`esc` 函数存在」——
+  证明不了每个插值都调了它。现在 `scripts/ci_checks.py` 把页面里那段 JS **真跑
+  一遍**（用 node），喂进 `<script>alert(1)</script><img src=x onerror=…>` 再看它
+  吐出什么 HTML。反证过：把 `esc(i.name)` 改成 `i.name`，检查立刻失败。没装 node
+  时明说「跳过」，不假装验过。
 - **`off` 和 `on` 成功时都说「已写入开关标记」。** 一条一条看下来，看不出这一条
   现在到底是开着还是关着。现在分方向：「已关掉（重启后生效）」/「已打开」。
   这是拿自己建的注册表探针真跑往返时发现的：初始没有 `StartupApproved` 值，

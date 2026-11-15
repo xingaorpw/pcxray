@@ -57,6 +57,15 @@ python -m coverage report --show-missing --skip-covered
 优先补**判断成功/失败**的那几行（「改完读回来对一遍」「出错时报什么」），
 而不是为了数字去点没用的分支。
 
+## 端到端自检
+
+```bash
+python scripts/ci_checks.py
+```
+
+它跑真命令行、真 HTTP 服务。其中「页面 JS 转义」那一项需要 `node`（在 CI 的
+runner 上本来就有）；没装会打印「跳过」，不会假装通过。
+
 ## 提交信息
 
 用 `feat:` / `fix:` / `docs:` / `test:` / `refactor:` 前缀，一句话说清改了什么。

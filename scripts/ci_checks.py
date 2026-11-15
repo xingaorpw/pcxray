@@ -13,6 +13,9 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
+import shutil
+import re
 import subprocess
 import sys
 import threading
@@ -257,12 +260,100 @@ def check_page_markup() -> None:
     check("页面里有脚本和样式", "<script>" in page and "<style>" in page)
 
 
+def check_page_js_escapes_hostile_data() -> None:
+    """把页面里那段 JS 真跑一遍（用 node），喂进带标签的数据。
+
+    静态检查只能证明「`esc` 函数存在」，证明不了「每个插值都调了它」。这段
+    直接把 `draw()` 跑起来看它吐出什么 HTML —— 那才是浏览器会执行的东西。
+    没装 node 就明说跳过，不假装验过。
+    """
+    from pcxray import web
+
+    node = shutil.which("node")
+    if not node:
+        print("  · 跳过 JS 渲染检查（没装 node）")
+        return
+
+    page = web._PAGE.replace("__TOKEN__", "test-token")
+    match = re.search(r"<script>(.*?)</script>", page, re.S)
+    if not match:
+        check("页面里有脚本块", False)
+        return
+    script = match.group(1)
+
+    hostile = "<script>alert(1)</script><img src=x onerror=alert(2)>"
+    payload = {
+        "generated": "2026-01-01 00:00:00",
+        "process_count": 1,
+        "problems": [hostile],
+        "ram": {"total": 8 * 1048576, "available": 4 * 1048576},
+        "background": [{"name": hostile, "mb": 200.0, "count": 1, "path": hostile}],
+        "autostart": {
+            "total": 1,
+            "enabled": 1,
+            "disabled": 0,
+            "memory_mb": 12.5,
+            "items": [
+                {
+                    "key": "k1",
+                    "name": hostile,
+                    "kind": "run",
+                    "command": hostile,
+                    "detail": "",
+                    "source": "注册表 · 用户 Run",
+                    "company": hostile,
+                    "enabled": True,
+                    "can_disable": True,
+                    "needs_force": False,
+                    "refuse": "",
+                    "flags": ["可疑路径"],
+                    "running_mb": 12.5,
+                    "exe": hostile,
+                }
+            ],
+        },
+    }
+
+    harness = (
+        "const els={};"
+        "function el(id){if(!els[id])els[id]={innerHTML:'',textContent:'',"
+        "classList:{add(){},remove(){}},onclick:null,dataset:{}};return els[id];}"
+        "global.document={getElementById:el,querySelectorAll:()=>[]};"
+        "global.fetch=async()=>{throw new Error('不该发请求')};"
+        "global.confirm=()=>true;\n"
+        + script
+        + "\nDATA = "
+        + json.dumps(payload, ensure_ascii=False)
+        + ";draw();console.log(JSON.stringify({t:el('table').innerHTML,"
+        "f:el('foot').innerHTML,s:el('stats').innerHTML}));"
+    )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "page.js")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(harness)
+        proc = subprocess.run(
+            [node, path], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120
+        )
+    if proc.returncode != 0:
+        check("页面 JS 能跑起来", False, proc.stderr.strip()[:300])
+        return
+
+    blob = json.loads(proc.stdout)
+    rendered = blob["t"] + blob["f"] + blob["s"]
+    check("页面 JS 能跑起来", True)
+    check("危险标签没被原样写进 HTML", "<script>" not in rendered and "<img" not in rendered)
+    check("危险内容被转义了", "&lt;script&gt;" in rendered and "&lt;img" in rendered)
+    check("正常内容仍然渲染", "可疑路径" in rendered and "注册表 · 用户 Run" in rendered)
+
+
 def main() -> int:
     print("端到端自检")
     check_bad_arguments()
     check_json_filter()
     check_web_csrf()
     check_page_markup()
+    check_page_js_escapes_hostile_data()
     check_no_handle_leak()
     check_json_contract()
     print()
