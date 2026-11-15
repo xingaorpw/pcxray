@@ -1,7 +1,7 @@
 # pcxray
 
 [![CI](https://github.com/xingaorpw/pcxray/actions/workflows/ci.yml/badge.svg)](https://github.com/xingaorpw/pcxray/actions/workflows/ci.yml)
-[![tests](https://img.shields.io/badge/tests-395%20passed-brightgreen)](https://github.com/xingaorpw/pcxray/tree/main/tests)
+[![tests](https://img.shields.io/badge/tests-399%20passed-brightgreen)](https://github.com/xingaorpw/pcxray/tree/main/tests)
 [![python](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/downloads/)
 [![deps](https://img.shields.io/badge/dependencies-0-brightgreen)](https://github.com/xingaorpw/pcxray/blob/main/pyproject.toml)
 [![license](https://img.shields.io/badge/license-MIT-blue)](https://github.com/xingaorpw/pcxray/blob/main/LICENSE)
@@ -225,6 +225,8 @@ python -m pcxray backups --all          # 列出全部备份（默认只给最�
 python -m pcxray off 名字 --force       # 允许改服务（默认只给建议）
 ```
 
+`--json` 的 `total` 是「命中多少」，`items` 是给出来的那一段，被截掉多少写在 `hidden_by_limit` 里 —— 脚本能一眼看出有没有少数据。
+
 `--kind` 只认 `run` / `run32` / `runonce` / `folder` / `task` / `service`，`--include` 只认 `registry` / `folders` / `tasks` / `services`。**写错会当场报错退出**，不会静默给你一份「这一类没有条目」的空报告。
 
 ## 它不会做什么
@@ -257,7 +259,7 @@ python -m pcxray off 名字 --force       # 允许改服务（默认只给建议
 ## 开发
 
 ```bash
-python -m unittest discover -s tests -t .     # 395 个测试
+python -m unittest discover -s tests -t .     # 399 个测试
 ```
 
 测试分两类：不依赖 Windows 的逻辑（命令行解析、开关状态解码、内存分组、表格排版、网页接口）在 Linux 上也能跑；真正读写注册表的端到端测试只在 Windows 上跑（`skipUnless`）。CI 两边都跑。

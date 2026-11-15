@@ -25,6 +25,10 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **`--json --limit N` 把世界说小了。** 以前 limit 之后才统计，`--json --limit 2`
+  会报 `total: 2` —— 脚本看到的是一个「只有两条自启项」的世界，完全不知道还有
+  181 条没给。现在 `total` / `enabled` / `disabled` 说的是「命中多少」，`items`
+  是给出来的那一段，两者之差写在 `hidden_by_limit` 里。
 - **注册表里类型不是字符串的自启项被静默跳过。** 有的程序（和一部分恶意软件）
   会把 `Run` 的值写成 `REG_DWORD`。Windows 不会拿它启动任何东西，但它确实在
   注册表里躺着 —— 静默跳过等于让用户以为「这一条不存在」。现在会在页面底部

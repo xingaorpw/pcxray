@@ -74,7 +74,12 @@ def check_json_filter() -> None:
 
     code, out, _err = run(["list", "--json", "--limit", "3"])
     limited = json.loads(out)["autostart"]
-    check("--limit 真的截断", limited["total"] == 3 and len(limited["items"]) == 3)
+    # total 是命中数，items 才是给出来的那一段；两者之差写在 hidden_by_limit
+    check(
+        "--limit 真的截断",
+        len(limited["items"]) == 3 and limited["hidden_by_limit"] == limited["total"] - 3,
+        f"items={len(limited['items'])} total={limited['total']} hidden={limited['hidden_by_limit']}",
+    )
 
     code, out, _err = run(["ram", "--json"])
     ram = json.loads(out)
@@ -132,6 +137,45 @@ def check_web_csrf() -> None:
         check("带令牌但条目不存在是 400", code == 400, f"实际 {code}")
     finally:
         server.shutdown()
+
+
+def check_json_contract() -> None:
+    """JSON 的计数必须自洽，截断必须说出来。
+
+    `--json --limit N` 以前把 total 也改成 N，脚本看到的是一个「只有 N 条自启
+    项」的世界。现在 total 是命中数，items 是给出来的，两者之差写在
+    hidden_by_limit 里。
+    """
+    import json
+    import subprocess
+    import sys
+
+    for args, expect_hidden in (
+        (["--json", "--limit", "3"], True),
+        (["--json"], False),
+        (["--json", "--kind", "task", "--limit", "2"], True),
+    ):
+        done = subprocess.run(
+            [sys.executable, "-m", "pcxray", "list"] + args,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        if done.returncode != 0:
+            check(f"{' '.join(args)} 能跑", False, done.stderr[-200:])
+            continue
+        try:
+            auto = json.loads(done.stdout)["autostart"]
+        except (json.JSONDecodeError, KeyError) as exc:
+            check(f"{' '.join(args)} 是合法 JSON", False, str(exc))
+            continue
+        consistent = (
+            len(auto["items"]) + auto["hidden_by_limit"] == auto["total"]
+            and auto["enabled"] + auto["disabled"] == auto["total"]
+        )
+        check(f"{' '.join(args)} 计数自洽", consistent, str(auto.get("total")))
+        if expect_hidden:
+            check(f"{' '.join(args)} 说了截断", auto["hidden_by_limit"] > 0, str(auto.get("hidden_by_limit")))
 
 
 def check_no_handle_leak() -> None:
@@ -220,6 +264,7 @@ def main() -> int:
     check_web_csrf()
     check_page_markup()
     check_no_handle_leak()
+    check_json_contract()
     print()
     if FAILED:
         print(f"  {len(FAILED)} 项没通过：{'、'.join(FAILED)}")

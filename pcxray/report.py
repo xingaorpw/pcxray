@@ -156,9 +156,12 @@ class Report:
         items = self.items
         if only:
             items = [i for i in items if i.entry.kind == only]
-        if limit:
-            items = items[:limit]
-        enabled = [i for i in items if i.entry.enabled]
+        # 计数说的是「这次查询命中多少」，items 只是其中显示出来的那一段。
+        # 以前 limit 之后才统计，于是 `--json --limit 2` 会报 total=2 —— 脚本
+        # 看到的是一个「只有两条自启项」的世界，完全不知道还有 181 条没给。
+        matched = items
+        shown = items[:limit] if limit else items
+        enabled = [i for i in matched if i.entry.enabled]
         return {
             "generated": time.strftime("%Y-%m-%d %H:%M:%S"),
             "admin": self.admin,
@@ -172,11 +175,13 @@ class Report:
             "process_count": self.process_count,
             "unreadable_processes": self.unreadable,
             "autostart": {
-                "total": len(items),
+                "total": len(matched),
                 "enabled": len(enabled),
-                "disabled": len(items) - len(enabled),
-                "memory_mb": round(self.autostart_memory(items), 1),
-                "items": [i.as_dict() for i in items],
+                "disabled": len(matched) - len(enabled),
+                "memory_mb": round(self.autostart_memory(matched), 1),
+                # len(items) + hidden_by_limit == total，脚本一眼能看出被截了
+                "hidden_by_limit": len(matched) - len(shown),
+                "items": [i.as_dict() for i in shown],
             },
             "background": [
                 {

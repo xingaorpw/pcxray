@@ -155,7 +155,9 @@ class TestJsonFiltering(unittest.TestCase):
     def test_limit_applies(self):
         data = self.rep.as_dict(limit=2)
         self.assertEqual(len(data["autostart"]["items"]), 2)
-        self.assertEqual(data["autostart"]["total"], 2)
+        # total 是「命中多少」，不是「给了多少」—— 后者会让脚本以为只有 2 条
+        self.assertEqual(data["autostart"]["total"], len(self.entries))
+        self.assertEqual(data["autostart"]["hidden_by_limit"], len(self.entries) - 2)
 
     def test_only_and_limit_together(self):
         data = self.rep.as_dict(only="task", limit=1)
@@ -252,6 +254,49 @@ class TestEmptyMachine(unittest.TestCase):
         self.assertEqual(data["autostart"]["total"], 0)
         self.assertEqual(data["autostart"]["items"], [])
         self.assertEqual(data["background"], [])
+
+
+class TestJsonDisclosesTruncation(unittest.TestCase):
+    """`--json --limit N` 不能把世界说小了。
+
+    以前 limit 之后才统计，`--json --limit 2` 会报 total=2 —— 脚本看到一个
+    「只有两条自启项」的世界，完全不知道还有 181 条没给。
+    """
+
+    def _report(self, count=10):
+        entries = [
+            autostart.Entry(name=f"p{i}", kind="run", source="用户 Run", scope="user", enabled=i % 2 == 0)
+            for i in range(count)
+        ]
+        return build(entries, [])
+
+    def test_total_counts_what_matched_not_what_is_shown(self):
+        data = self._report().as_dict(limit=3)
+        auto = data["autostart"]
+        self.assertEqual(auto["total"], 10)
+        self.assertEqual(len(auto["items"]), 3)
+        self.assertEqual(auto["hidden_by_limit"], 7)
+
+    def test_counts_are_consistent(self):
+        auto = self._report().as_dict(limit=3)["autostart"]
+        self.assertEqual(auto["enabled"] + auto["disabled"], auto["total"])
+        self.assertEqual(len(auto["items"]) + auto["hidden_by_limit"], auto["total"])
+
+    def test_no_limit_means_nothing_hidden(self):
+        auto = self._report().as_dict()["autostart"]
+        self.assertEqual(auto["hidden_by_limit"], 0)
+        self.assertEqual(len(auto["items"]), auto["total"])
+
+    def test_kind_filter_applies_before_the_limit(self):
+        entries = [
+            autostart.Entry(name="r1", kind="run", source="用户 Run", scope="user"),
+            autostart.Entry(name="t1", kind="task", source="计划任务", scope="user"),
+            autostart.Entry(name="t2", kind="task", source="计划任务", scope="user"),
+        ]
+        auto = build(entries, []).as_dict(only="task", limit=1)["autostart"]
+        self.assertEqual(auto["total"], 2)
+        self.assertEqual(len(auto["items"]), 1)
+        self.assertEqual(auto["hidden_by_limit"], 1)
 
 
 class TestHeaderMatchesWhatWasScanned(unittest.TestCase):
