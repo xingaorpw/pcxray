@@ -279,6 +279,9 @@ def _plan(entry, turn_on: bool, mode: str) -> dict | None:
             "hive": hive,
             "subkey": approved,
             "value_name": value,
+            # 自启项本身在哪个键。还原时拿它判断「这一条还在不在」——
+            # 光看 StartupApproved 里的标记是不够的，那正是我们要写回去的东西。
+            "target_subkey": subkey,
             "existed": existed,
             "old": old_hex,
             "old_str": old_str,
@@ -515,6 +518,24 @@ def describe_backup(path: str) -> tuple[str, str]:
     return created or "时间未知", count
 
 
+def _value_exists(hive: str, subkey: str, value_name: str) -> bool:
+    """那个值还在不在。
+
+    读不到（权限、键不存在）一律当「还在」—— 宁可多写一个无害的标记，也不能
+    因为查不了就把用户真正要还原的东西跳过。
+    """
+    try:
+        import winreg
+
+        with winreg.OpenKey(_hive(hive), subkey) as key:
+            winreg.QueryValueEx(key, value_name)
+        return True
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+
+
 def _backup_is_usable(path: str) -> bool:
     """这份备份能不能拿来还原。
 
@@ -591,6 +612,16 @@ def restore(path: str = "", dry_run: bool = False) -> tuple[list[Result], str]:
             results.append(Result(name, True, "（演练）将还原"))
             continue
         try:
+            if (
+                op.get("kind") == "flag"
+                and op.get("target_subkey")
+                and not _value_exists(op.get("hive", ""), op["target_subkey"], op.get("value_name", ""))
+            ):
+                # 自启项已经被删了（用户自己删的、卸载程序清掉的）。再往
+                # StartupApproved 里写一个标记，只会在注册表里留一条谁都看不见的
+                # 垃圾 —— 它对应的自启项根本不存在了。
+                results.append(Result(name, True, "这一条已经不在了，跳过"))
+                continue
             if op["kind"] in ("flag", "move") and not _subkey_exists(op.get("hive", ""), op.get("subkey", "")):
                 # 备份可能是从别的机器拷来的，或者那一片注册表已经被删了。
                 # 直接写下去 Windows 会**新建**这个键，然后我们报告「已还原」——

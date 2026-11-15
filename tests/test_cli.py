@@ -231,6 +231,25 @@ class TestMixedNamesAreAllReported(unittest.TestCase):
         self.assertIn(good.name, out)
 
 
+class TestNegativeLimitsAreRejected(unittest.TestCase):
+    """负的 --limit 不能静默丢数据。
+
+    `shown[:-5]` 会悄悄少掉最后 5 行，看起来像「数据就这么点」。
+    """
+
+    def test_list_rejects_negative_limit(self):
+        with quiet_stdout(), quiet_stderr() as err:
+            code = cli.main(["list", "--limit", "-1"])
+        self.assertEqual(code, 2)
+        self.assertIn("--limit 不能是负数", err.getvalue())
+
+    def test_ram_rejects_negative_limit(self):
+        with quiet_stdout(), quiet_stderr() as err:
+            code = cli.main(["ram", "--limit", "-1"])
+        self.assertEqual(code, 2)
+        self.assertIn("--limit 不能是负数", err.getvalue())
+
+
 class TestTruncationIsDisclosed(unittest.TestCase):
     """截断必须说出来。
 

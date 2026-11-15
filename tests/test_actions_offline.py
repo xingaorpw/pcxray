@@ -324,6 +324,64 @@ class TestRestoreSkipsUnusableBackups(unittest.TestCase):
         self.assertFalse(actions._backup_is_usable(os.path.join(self._dir.name, "nope.json")))
 
 
+class TestRestoreDoesNotRecreateStaleFlags(unittest.TestCase):
+    """自启项被删掉之后，还原不该再往 StartupApproved 里写标记。
+
+    标记本身看不见，但它对应的自启项已经不存在了 —— 往用户的注册表里留一条谁也
+    不认识的记录，和「还原」这个词的意思不一样。
+    """
+
+    def setUp(self):
+        self._dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._dir.cleanup)
+        patcher = mock.patch.object(actions, "BACKUP_DIR", self._dir.name)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_flag_op_for_a_deleted_item_is_skipped(self):
+        op = {
+            "kind": "flag",
+            "hive": "HKCU",
+            "subkey": r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run",
+            "target_subkey": r"Software\Microsoft\Windows\CurrentVersion\Run",
+            "value_name": "pcxray_definitely_not_there",
+            "name": "pcxray_definitely_not_there",
+            "existed": True,
+            "old": "02" + "00" * 10,
+            "old_str": None,
+            "old_kind": 3,
+            "new": "03" + "00" * 10,
+        }
+        path = os.path.join(self._dir.name, "b.json")
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump({"created": "2026-11-15 03:00:00", "ops": [op]}, handle)
+        results, _used = actions.restore(path)
+        self.assertEqual(len(results), 1)
+        self.assertTrue(results[0].ok)
+        self.assertIn("已经不在了", results[0].message)
+
+    def test_op_without_target_subkey_still_restores(self):
+        # 老备份没有这个字段，不能因为「不知道」就跳过
+        op = {
+            "kind": "flag",
+            "hive": "HKCU",
+            "subkey": r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run",
+            "value_name": "pcxray_old_backup_shape",
+            "name": "pcxray_old_backup_shape",
+            "existed": False,
+            "old": None,
+            "old_str": None,
+            "old_kind": None,
+            "new": "03",
+        }
+        path = os.path.join(self._dir.name, "old.json")
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump({"created": "2026-11-15 03:00:00", "ops": [op]}, handle)
+        results, _used = actions.restore(path, dry_run=True)
+        self.assertEqual(len(results), 1)
+        self.assertIn("将还原", results[0].message)
+
+
 class TestDescribeBackup(unittest.TestCase):
     """列表里要能看出「哪份是刚才那次」。
 

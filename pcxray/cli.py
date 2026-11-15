@@ -155,6 +155,10 @@ def _cmd_list(args) -> int:
 
 
 def _cmd_ram(args) -> int:
+    if args.limit < 0:
+        # `groups[:-5]` 会静默丢掉最后 5 组，看起来像「程序就这么几个」
+        print("  ✗ --limit 不能是负数。0 表示不限，其它值是最多显示几行。", file=sys.stderr)
+        return 2
     process_list = winapi.processes()
     logon = procs.logon_time(process_list)
     groups = procs.group(process_list)
