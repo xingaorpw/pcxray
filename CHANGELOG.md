@@ -25,6 +25,11 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **计划任务的关闭路径补了端到端证据。** 之前只有单元测试（读回状态对不上要报
+  失败），没在真系统上走过一遍。这次建了一条登录触发的任务实测：`off` 之后
+  `Get-ScheduledTask` 的状态真的从 `Ready` 变成 `Disabled`，列表里 `enabled`
+  也跟着变 `false`；`restore` 之后回到 `Ready`。服务那条仍然只验到「干净拒绝」，
+  非管理员改不了，没法走完整条路 —— README 里把两者的差别写清楚了。
 - **「一次看全」这句话以前没有硬证据。** 现在 `ci_checks.py` 做四个来源的对账：
   注册表 8 个位置逐个读值比名字集合、启动文件夹 `os.listdir` 比名字、计划任务和
   `Get-ScheduledTask` 比条数、服务数和 `Win32_Service` 比条数。本机实测：
