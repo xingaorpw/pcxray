@@ -383,6 +383,56 @@ def check_page_js_escapes_hostile_data() -> None:
     )
 
 
+def check_page_js_escapes_hostile_attributes() -> None:
+    r"""属性里的数据也得转义 —— 这一条以前没人管。
+
+    `refuse` 是塞进 `title="${esc(i.refuse)}"` 的。如果哪天 esc 少转义一个
+    引号，`refuse` 里一句 `" onmouseover="alert(1)` 就能跳出属性、凭空造一个
+    事件处理器。原来的 XSS 检查只喂了名字/命令行/发行商，`refuse`、`flags`、
+    搜索词这三个位置一直是没人验的。
+    """
+    breakout = '" onmouseover="alert(1)" data-x="<img src=x onerror=alert(2)>'
+    payload = _payload(
+        [
+            _item(
+                "正常条目",
+                "service",
+                can_disable=False,
+                refuse=breakout,
+                flags=[breakout],
+                detail=breakout,
+            )
+        ]
+    )
+    blob = _run_page_js(
+        payload,
+        # 搜索框里的词也会被拼进 HTML，一样得转义
+        "q=" + repr(breakout) + ";draw();console.log(JSON.stringify({t:el('table').innerHTML}));",
+    )
+    if blob is None:
+        print("  · 跳过属性转义检查（没装 node）")
+        return
+    if "__error__" in blob:
+        check("属性转义：页面 JS 能跑起来", False, blob["__error__"])
+        return
+    rendered = blob["t"]
+    check(
+        "属性里的引号被转义了（跳不出 title=）",
+        "onmouseover=\"alert" not in rendered,
+        "" if "onmouseover=\"alert" not in rendered else "refuse 里的引号原样落进了属性",
+    )
+    check(
+        "整段恶意内容都被转义成实体",
+        "<img" not in rendered and "&lt;img" in rendered,
+        "" if "<img" not in rendered else "有未转义的内容：" + rendered[:120],
+    )
+    check(
+        "`refuse` 的原文仍然看得见（转义不是吞掉）",
+        "&quot;" in rendered,
+        "" if "&quot;" in rendered else "转义之后连内容都没了",
+    )
+
+
 def check_page_js_filters() -> None:
     """默认只显示「全部常用」，点分类看那一类，搜不到要说清是搜不到。"""
     payload = _payload([_item("run-item", "run"), _item("svc-item", "service")])
@@ -1799,6 +1849,7 @@ def main() -> int:
     check_served_page_is_the_template_filled_in()
     check_page_markup()
     check_page_js_escapes_hostile_data()
+    check_page_js_escapes_hostile_attributes()
     check_page_js_filters()
     check_no_handle_leak()
     check_json_contract()

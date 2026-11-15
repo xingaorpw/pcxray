@@ -25,6 +25,13 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **网页的属性里塞数据，转义没人验过。** `refuse` 是塞进 `title="${esc(...)}"`
+  的，原来的 XSS 检查只喂了名字/命令行/发行商，**`refuse`、`flags`、搜索词**
+  这三个位置一直没人验。现在专门喂一句 `" onmouseover="alert(1)" data-x="<img
+  src=x onerror=alert(2)>`：引号必须转义成 `&quot;`（跳不出 `title=`），标签
+  必须转义成 `&lt;img`，而且转义之后原文还得看得见。反证过：把 `esc` 里的
+  引号转义删掉 → 新检查红，而老的「危险内容被转义了」**依旧绿** —— 正好说明
+  它对属性上下文是瞎的。
 - **计划任务这条关闭路径，从「手工跑过一次」变成「每次自检都跑」。**
   以前 README 里那句「本机端到端实测」靠的是一次手工验证 —— 手工验证不会
   在下次改动时报警。现在 `ci_checks.py` 每次建一条登录触发的探针任务，
