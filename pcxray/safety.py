@@ -13,6 +13,7 @@ import re
 __all__ = [
     "protected_process",
     "protected_service",
+    "exe_of",
     "suspect_path",
     "hidden_args",
     "refuse_reason",
@@ -83,6 +84,29 @@ _PROTECTED_SERVICE = frozenset(
 # 可执行文件落在这些目录下的服务，就是 Windows 自己的一部分。
 _SYSTEM_DIRS = ("\\windows\\system32\\", "\\windows\\syswow64\\", "\\windows\\system32\\driversstore\\")
 
+# 这些 exe 是 Windows 的宿主进程，本身就是系统组件。
+# 光看路径不够：`svchost.exe -k netsvcs` 这种命令行可能没有目录部分，
+# 非管理员下 `Win32_Service.PathName` 还可能整个读不到（CI 上就这么挂的）。
+_SYSTEM_HOSTS = frozenset(
+    {
+        "svchost.exe",
+        "services.exe",
+        "lsass.exe",
+        "wininit.exe",
+        "winlogon.exe",
+        "smss.exe",
+        "csrss.exe",
+        "spoolsv.exe",
+        "sihost.exe",
+        "taskhostw.exe",
+        "dllhost.exe",
+        "searchindexer.exe",
+        "fontdrvhost.exe",
+        "wudfhost.exe",
+        "audiodg.exe",
+    }
+)
+
 SUSPECT_HINT = "路径在临时目录或下载目录，正常软件不会把常驻程序放这里"
 
 
@@ -90,20 +114,43 @@ def protected_process(name: str) -> bool:
     return (name or "").strip().lower() in PROTECTED_PROCESS
 
 
+def exe_of(command: str) -> str:
+    """从命令行里取出 exe 的文件名（小写）。
+
+    `"C:\\a b\\x.exe" --flag` → `x.exe`，`svchost.exe -k netsvcs` → `svchost.exe`。
+    """
+    raw = (command or "").strip()
+    if raw.startswith('"'):
+        end = raw.find('"', 1)
+        raw = raw[1:end] if end > 0 else raw[1:]
+    else:
+        raw = raw.split(" ")[0]
+    raw = raw.replace("/", "\\").rstrip("\\")
+    return raw.rsplit("\\", 1)[-1].lower()
+
+
 def protected_service(name: str, path: str = "") -> bool:
     """这个服务算不算「系统自带」。
 
-    两条判据，任意一条成立就算：
-    1. 名字在点名名单里（`svchost` 这类共用宿主，光看路径分不出来）
-    2. 可执行文件在 `Windows\\System32` / `SysWOW64` / `DriverStore` 下
+    三条判据，任意一条成立就算：
 
-    第 2 条比维护一份微软服务名单可靠得多 —— 微软加一个新服务不需要我改代码。
+    1. 名字在点名名单里
+    2. 可执行文件是 Windows 的宿主进程（`svchost.exe` 之类）
+    3. 可执行文件在 `Windows\\System32` / `SysWOW64` / `DriverStore` 下
+
+    第 3 条比维护一份微软服务名单可靠得多 —— 微软加一个新服务不需要我改代码。
+
+    **读不到路径时不在这里判。** 这个函数只回答「已知的信息说明了什么」；
+    「读不到路径该怎么办」是扫描器的策略（见 `autostart.scan_services`），
+    放在这里会让「只给名字」的调用莫名其妙全变成 True。
     """
     if (name or "").strip().lower() in _PROTECTED_SERVICE:
         return True
     low = _norm(path)
     if not low:
         return False
+    if exe_of(path) in _SYSTEM_HOSTS:
+        return True
     return any(fragment in low for fragment in _SYSTEM_DIRS)
 
 

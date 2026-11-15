@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-import os
 import time
 
 from . import safety, winapi
@@ -121,6 +120,31 @@ _SHARED_HOSTS = frozenset(
 )
 
 
+def _win_base(path: str) -> str:
+    """取 Windows 路径的文件名。
+
+    不能用 `os.path.basename` —— 在 Linux 上它不认 `\\` 当分隔符，会把
+    `C:\\Windows\\system32\\cmd.exe` 整串当成文件名。这个模块的输入永远是
+    Windows 路径，所以自己按两种分隔符切。
+    """
+    cleaned = (path or "").strip().strip('"').rstrip("\\/")
+    for sep in ("\\", "/"):
+        if sep in cleaned:
+            cleaned = cleaned.rsplit(sep, 1)[-1]
+    return cleaned.lower()
+
+
+def _win_key(path: str) -> str:
+    """Windows 路径的比较键：统一分隔符、去掉引号、转小写。
+
+    同样不能用 `os.path.normcase` —— 它在 Linux 上是空操作，大小写不同的
+    同一条路径会比不相等，测试在 Ubuntu 上就是这么挂的。
+    """
+    cleaned = (path or "").strip().strip('"')
+    cleaned = cleaned.replace("/", "\\").rstrip("\\")
+    return cleaned.lower()
+
+
 def running_of(exe: str, procs: list[winapi.Process]) -> list[winapi.Process]:
     """路径精确匹配正在运行的进程。
 
@@ -129,10 +153,10 @@ def running_of(exe: str, procs: list[winapi.Process]) -> list[winapi.Process]:
     """
     if not exe:
         return []
-    if os.path.basename(exe).lower() in _SHARED_HOSTS:
+    if _win_base(exe) in _SHARED_HOSTS:
         return []  # 宿主程序，归属没有意义
-    want = os.path.normcase(os.path.normpath(exe))
-    return [p for p in procs if p.path and os.path.normcase(os.path.normpath(p.path)) == want]
+    want = _win_key(exe)
+    return [p for p in procs if p.path and _win_key(p.path) == want]
 
 
 def autostart_pids(procs: list[winapi.Process], logon: float) -> set[int]:

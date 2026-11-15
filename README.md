@@ -1,7 +1,7 @@
 # pcxray
 
 [![CI](https://github.com/xingaorpw/pcxray/actions/workflows/ci.yml/badge.svg)](https://github.com/xingaorpw/pcxray/actions/workflows/ci.yml)
-[![tests](https://img.shields.io/badge/tests-201%20passed-brightgreen)](https://github.com/xingaorpw/pcxray/tree/main/tests)
+[![tests](https://img.shields.io/badge/tests-214%20passed-brightgreen)](https://github.com/xingaorpw/pcxray/tree/main/tests)
 [![python](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/downloads/)
 [![deps](https://img.shields.io/badge/dependencies-0-brightgreen)](https://github.com/xingaorpw/pcxray/blob/main/pyproject.toml)
 [![license](https://img.shields.io/badge/license-MIT-blue)](https://github.com/xingaorpw/pcxray/blob/main/LICENSE)
@@ -202,16 +202,18 @@ python -m pcxray off 名字 --force       # 允许改服务（默认只给建议
 2. **非管理员看不到全部进程的路径。** 实测 372 个进程里有 179 个拿不到路径和启动时间（受保护进程）。**内存数字不受影响**，那是另一条不需要句柄的路径拿的。要看路径用 `--elevate`。
 3. **内存数字依赖一个未文档化的系统调用。** `NtQuerySystemInformation(SystemProcessInformation)` 一次就能拿到所有进程的内存，不需要逐个开句柄 —— 这是非管理员也能看到全部内存的唯一办法。因为它没文档，启动时会拿 6 个进程和官方接口 `GetProcessMemoryInfo` 交叉比对，偏差超过 20% 就整体退回逐个读（覆盖少一半但数字都是真的），并在界面上写明。
 4. **服务的「关掉」是改成手动启动，不会立刻停止。** 重启后才生效。而且非管理员根本改不了服务，会直接拒绝。
-5. **启动文件夹里解不出来的快捷方式只显示文件名。** 目标路径靠 PowerShell 的 `WScript.Shell` 解，某些 .lnk 会失败，这时会明确写「解不出来」，不会瞎猜一个路径。
-6. **计划任务和服务靠 PowerShell 读。** 读不到（PowerShell 被策略禁掉、超时）会明确显示「读不到」，不会当成「没有」。
-7. **没有数字签名校验。** 「发行商」只是读 exe 里自带的版本信息，任何人都能写。它只能帮你判断「这个程序有没有自报家门」，不能证明安全性。
-8. **同名进程合并显示。** 两个不同目录下同名的 exe 会被算成一行。实际很少见，但确实会。
-9. **不能看到自启项「上次启动用了多久」。** 那需要读事件日志，没做。
+5. **读不到可执行文件路径的服务一律按系统组件处理。** 非管理员下确实有一批服务的 `PathName` 读不到（CI 的 Windows runner 上就有）。这种情况下判断不了关掉会怎样，所以不给开关 —— 备注列会写「读不到可执行文件路径，按系统组件处理」。这是有意的保守。
+6. **启动文件夹里解不出来的快捷方式只显示文件名。** 目标路径靠 PowerShell 的 `WScript.Shell` 解，某些 .lnk 会失败，这时会明确写「解不出来」，不会瞎猜一个路径。
+7. **计划任务和服务靠 PowerShell 读。** 读不到（PowerShell 被策略禁掉、超时）会明确显示「读不到」，不会当成「没有」。
+8. **没有数字签名校验。** 「发行商」只是读 exe 里自带的版本信息，任何人都能写。它只能帮你判断「这个程序有没有自报家门」，不能证明安全性。
+9. **同名进程合并显示。** 两个不同目录下同名的 exe 会被算成一行。实际很少见，但确实会。
+10. **不能看到自启项「上次启动用了多久」。** 那需要读事件日志，没做。
+11. **控制台代码页会被改成 UTF-8。** 不切的话英文 Windows 上打中文会直接 `UnicodeEncodeError` 崩溃（CI 上真崩过一次）。改了之后中文能正常显示，代价是同一个窗口里后续别的命令也按 UTF-8 解释。
 
 ## 开发
 
 ```bash
-python -m unittest discover -s tests -t .     # 201 个测试
+python -m unittest discover -s tests -t .     # 214 个测试
 ```
 
 测试分两类：不依赖 Windows 的逻辑（命令行解析、开关状态解码、内存分组、表格排版、网页接口）在 Linux 上也能跑；真正读写注册表的端到端测试只在 Windows 上跑（`skipUnless`）。CI 两边都跑。

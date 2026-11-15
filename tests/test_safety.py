@@ -60,6 +60,37 @@ class TestProtectedService(unittest.TestCase):
             safety.protected_service("ClashVergeSvc", r'"C:\Program Files\Clash Verge\clash-verge-service.exe"')
         )
 
+    def test_bare_svchost_is_protected(self):
+        # 有的服务 PathName 只有 `svchost.exe -k netsvcs`，没有目录部分。
+        # 光看路径会漏判，所以要按 exe 名字再兜一层。
+        self.assertTrue(safety.protected_service("SomeSvc", "svchost.exe -k netsvcs -p"))
+
+    def test_quoted_svchost_is_protected(self):
+        self.assertTrue(
+            safety.protected_service("SomeSvc", r'"C:\Windows\System32\svchost.exe" -k netsvcs')
+        )
+
+    def test_name_only_does_not_guess(self):
+        # 只给名字时不能替调用方假设「不知道就当系统组件」——那是扫描器的策略
+        self.assertFalse(safety.protected_service("AdskLicensingService"))
+
+
+class TestExeOf(unittest.TestCase):
+    def test_quoted_with_args(self):
+        self.assertEqual(safety.exe_of(r'"C:\a b\X.EXE" --flag'), "x.exe")
+
+    def test_unquoted_with_args(self):
+        self.assertEqual(safety.exe_of(r"C:\Windows\system32\ctfmon.exe -x"), "ctfmon.exe")
+
+    def test_bare_name(self):
+        self.assertEqual(safety.exe_of("svchost.exe -k netsvcs"), "svchost.exe")
+
+    def test_empty(self):
+        self.assertEqual(safety.exe_of(""), "")
+
+    def test_forward_slashes(self):
+        self.assertEqual(safety.exe_of("C:/Apps/Thing.exe"), "thing.exe")
+
 
 class TestSuspectPath(unittest.TestCase):
     def test_temp(self):

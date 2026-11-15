@@ -432,6 +432,10 @@ def scan_services() -> tuple[list[Entry], str]:
         command = str(row.get("PathName") or "")
         exe = split_exe(command)
         running = str(row.get("State") or "") == "Running"
+        # 读不到 PathName 的服务一律按系统组件处理。不是保守过头 —— 判断不了
+        # 就不知道关掉会怎样，而关错服务的后果是开不了机。非管理员下确实有
+        # 一批服务的 PathName 读不到（CI 的 windows runner 上就有）。
+        unreadable = not command.strip()
         out.append(
             Entry(
                 name=name,
@@ -442,8 +446,10 @@ def scan_services() -> tuple[list[Entry], str]:
                 exe=exe,
                 enabled=True,
                 detail=str(row.get("DisplayName") or ""),
-                note="正在运行" if running else "已停止（仍会随开机启动）",
-                protected=safety.protected_service(name, command),
+                note="读不到可执行文件路径，按系统组件处理" if unreadable else (
+                    "正在运行" if running else "已停止（仍会随开机启动）"
+                ),
+                protected=unreadable or safety.protected_service(name, command),
                 locator={"name": name},
             )
         )

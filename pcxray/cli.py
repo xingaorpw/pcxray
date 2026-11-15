@@ -16,6 +16,31 @@ from . import __version__, actions, autostart, procs, report as report_mod, text
 __all__ = ["main", "resolve"]
 
 
+def _setup_console() -> None:
+    """让中文能正常打到控制台。
+
+    Windows 的控制台代码页可能是 cp1252（英文系统）或 cp936（中文系统），
+    直接 `print` 中文会抛 `UnicodeEncodeError` 把整个命令打断 —— CI 上就
+    是这样挂的。两步：先把控制台代码页切到 UTF-8，再把 Python 的 stdout
+    换成 UTF-8 且 `errors="replace"`。
+
+    切不动也不要紧：`errors="replace"` 保证最坏情况是显示成问号，而不是崩溃。
+    """
+    if winapi.IS_WINDOWS:
+        try:
+            import ctypes
+
+            ctypes.windll.kernel32.SetConsoleOutputCP(65001)
+            ctypes.windll.kernel32.SetConsoleCP(65001)
+        except (OSError, AttributeError, ImportError):
+            pass
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError, ValueError):
+            pass
+
+
 def resolve(entries: list[autostart.Entry], query: str) -> tuple[autostart.Entry | None, list[autostart.Entry]]:
     """把用户写的名字解析成唯一一条。返回 (命中, 候选列表)。
 
@@ -282,6 +307,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    _setup_console()
     argv = list(sys.argv[1:] if argv is None else argv)
     parser = build_parser()
     args = parser.parse_args(argv)

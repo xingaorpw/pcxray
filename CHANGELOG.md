@@ -39,4 +39,16 @@
   字节一致，但「重启后确实不启动」这一步留给用户确认。需要当场确认生效的
   场景请用 `--mode move`。
 
+### 修正（发布后 CI 抓到的）
+
+- **Windows 路径比较不能交给 `os.path`。** `normcase` 在 Linux 上是空操作、
+  `basename` 不认 `\`，导致纯逻辑测试在 ubuntu 上挂了（大小写不同的同一条
+  路径比不相等、`cmd.exe` 没被识别成宿主程序）。改成自己按两种分隔符切。
+- **有的服务 `PathName` 里没有目录部分**（只有 `svchost.exe -k netsvcs`），
+  按路径判会漏掉。补一条按 exe 名字判断，并把「读不到路径」的服务一并按
+  系统组件处理。
+- **英文 Windows 上打中文会崩溃。** 控制台代码页是 cp1252 时 `print` 中文
+  抛 `UnicodeEncodeError`，整个命令直接断掉。现在启动时把代码页切到 UTF-8，
+  并把 stdout 的编码换成 UTF-8 + `errors="replace"`。
+
 [0.1.0]: https://github.com/xingaorpw/pcxray/releases/tag/v0.1.0

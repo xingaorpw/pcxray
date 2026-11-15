@@ -82,6 +82,42 @@ class TestLogonTime(unittest.TestCase):
         self.assertAlmostEqual(procs.logon_time([]), winapi.boot_time(), delta=1.0)
 
 
+class TestPathHelpers(unittest.TestCase):
+    """这两个函数原来用 os.path，在 Linux 上直接失效 —— CI 就是这么挂的。"""
+
+    def test_base_of_windows_path_on_any_os(self):
+        self.assertEqual(procs._win_base(r"C:\Windows\system32\cmd.exe"), "cmd.exe")
+
+    def test_base_with_quotes(self):
+        self.assertEqual(procs._win_base(r'"C:\a b\Thing.EXE"'), "thing.exe")
+
+    def test_key_normalises_separators_and_case(self):
+        self.assertEqual(procs._win_key(r"C:\Apps\X.EXE"), procs._win_key("c:/apps/x.exe"))
+
+    def test_key_strips_trailing_separator(self):
+        self.assertEqual(procs._win_key(r"C:\Apps\X.exe\ "), r"c:\apps\x.exe")
+
+    def test_matching_survives_linux_style_os_path(self):
+        """把 os.path 换成 Linux 的行为，匹配必须照旧。
+
+        这就是 CI 在 ubuntu 上挂掉的那个场景：`normcase` 在 Linux 上是空操作，
+        `basename` 不认 `\\`。如果代码退回去用 os.path，这条会立刻失败。
+        """
+        import os
+        import posixpath
+        from unittest import mock
+
+        ps = [fake(1, "cmd.exe", path=r"C:\Windows\system32\cmd.exe")]
+        with mock.patch.object(os.path, "normcase", posixpath.normcase), mock.patch.object(
+            os.path, "basename", posixpath.basename
+        ):
+            # 宿主程序仍要被排除
+            self.assertEqual(procs.running_of(r"C:\Windows\system32\cmd.exe", ps), [])
+            # 大小写不同的同一条路径仍要匹配上
+            ps2 = [fake(2, "x.exe", path=r"C:\Apps\X.EXE")]
+            self.assertEqual(len(procs.running_of(r"c:\apps\x.exe", ps2)), 1)
+
+
 class TestRunningOf(unittest.TestCase):
     def test_exact_path_match(self):
         ps = [fake(1, "x.exe", path=r"C:\Program Files\X\x.exe")]
