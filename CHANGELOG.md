@@ -25,6 +25,9 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **`restore` 传一个目录进来时，报的是「Permission denied」。** Windows 上
+  `open()` 一个目录抛的就是这个 —— 用户看到会去查权限、改 ACL，其实只是路径
+  写成了文件夹。现在先判一下：「那是个目录，不是备份文件：<路径>」。
 - **还原失败时也写「使用备份：<路径>」。** 那份备份根本没被用上，是它自己坏了
   （不是合法 JSON / 结构不对），这句话会让用户以为改动已经生效。现在失败时写
   「出问题的备份：<路径>」。这是拿坏备份文件真跑一遍时发现的。

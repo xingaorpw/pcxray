@@ -691,6 +691,10 @@ def restore(path: str = "", dry_run: bool = False) -> tuple[list[Result], str]:
                     f"最近的 {len(backups)} 份备份都读不出来，没法还原",
                 )
             ], ""
+    # 传目录进来时 Windows 报的是 Permission denied —— 用户会以为自己没权限，
+    # 其实是「这不是一个文件」。先看一眼再开门。
+    if os.path.isdir(path):
+        return [Result("（还原）", False, f"那是个目录，不是备份文件：{path}")], path
     try:
         with open(path, "r", encoding="utf-8") as handle:
             payload = json.load(handle)

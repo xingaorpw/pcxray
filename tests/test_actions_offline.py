@@ -361,6 +361,22 @@ class TestFolderItemInMoveMode(unittest.TestCase):
         self.assertIn("StartupApproved", plan["subkey"])
 
 
+class TestRestoreGivenADirectory(unittest.TestCase):
+    """传目录进来时说清楚是目录，不要报成「Permission denied」。
+
+    Windows 上 open() 一个目录抛的是 Permission denied —— 用户看到这句会去查
+    权限、改 ACL，其实只是路径写成了文件夹。
+    """
+
+    def test_directory_is_named_as_a_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            done, path = actions.restore(tmp)
+        self.assertFalse(done[0].ok)
+        self.assertIn("那是个目录", done[0].message)
+        self.assertNotIn("Permission denied", done[0].message)
+        self.assertNotIn("读备份失败", done[0].message)
+
+
 class TestRestoreMalformedRecords(unittest.TestCase):
     """备份可能是手改过的、写到一半断电的。
 
