@@ -428,6 +428,20 @@ class _Server(ThreadingHTTPServer):
         super().__init__(address, handler)
         self.token = secrets.token_urlsafe(18)
 
+    def handle_error(self, request, client_address) -> None:
+        """浏览器刷新、关标签、取消 fetch 都会把连接掐掉 —— 那不是错误。
+
+        默认实现会把整段 traceback 打到终端上。用户只是刷新了一下页面，终端
+        就刷出一屏 `ConnectionResetError: [WinError 10054]`，看着像程序坏了。
+        只吞掉「对端断了」这一类，别的异常照旧报出来（那才是真 bug）。
+        """
+        exc = sys.exc_info()[1]
+        if isinstance(
+            exc, (ConnectionResetError, ConnectionAbortedError, BrokenPipeError, TimeoutError)
+        ):
+            return
+        super().handle_error(request, client_address)
+
 
 def make_server(port: int = 0) -> _Server:
     return _Server(("127.0.0.1", port), Handler)

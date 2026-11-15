@@ -204,6 +204,47 @@ class ServerCase(unittest.TestCase):
             return exc.code, json.loads(exc.read().decode("utf-8"))
 
 
+class TestAbortedConnectionsStayQuiet(ServerCase):
+    """浏览器把连接掐掉时，终端里不该出现 traceback。
+
+    刷新页面、关标签、取消 fetch 都会让对端先断。默认的 `handle_error` 会把
+    整段 traceback 打到终端上 —— 用户看到一屏 `ConnectionResetError:
+    [WinError 10054]`，第一反应是「这程序坏了」。
+    """
+
+    def _error_output(self, exc):
+        buffer = io.StringIO()
+        with contextlib.redirect_stderr(buffer):
+            try:
+                raise exc
+            except type(exc):
+                self.server.handle_error(None, ("127.0.0.1", 1))
+        return buffer.getvalue()
+
+    def test_reset_by_peer_prints_nothing(self):
+        for exc in (
+            ConnectionResetError(10054, "远程主机强迫关闭了一个现有的连接"),
+            ConnectionAbortedError(10053, "你的主机中的软件中止了一个已建立的连接"),
+            BrokenPipeError(32, "管道已结束"),
+        ):
+            with self.subTest(exc=type(exc).__name__):
+                self.assertEqual(self._error_output(exc), "", f"{type(exc).__name__} 被打出来了")
+
+    def test_real_errors_are_still_reported(self):
+        """别把真 bug 一起吞掉 —— 那是另一种坏。"""
+        output = self._error_output(ValueError("这里真的出错了"))
+        self.assertIn("ValueError", output)
+        self.assertIn("这里真的出错了", output)
+
+    def test_server_keeps_serving_after_a_client_hangs_up(self):
+        sock = socket.create_connection(("127.0.0.1", self.port), timeout=5)
+        sock.sendall(b"GET / HTTP/1.1\r\nHost: x\r\n\r\n")
+        sock.close()  # 不读就走
+        time.sleep(0.3)
+        with urllib.request.urlopen(self.url("/"), timeout=20) as response:
+            self.assertEqual(response.status, 200)
+
+
 class TestUnreadBodyDoesNotPoisonTheConnection(ServerCase):
     """没读完的请求体不许污染同一条连接上的下一条请求。
 

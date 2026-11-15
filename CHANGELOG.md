@@ -25,6 +25,14 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **刷新一下网页，终端就刷出一屏 Python traceback。** 浏览器刷新、关标签、
+  取消 fetch 都会先掐断连接，`socketserver` 默认的 `handle_error` 会把整段
+  `ConnectionResetError: [WinError 10054]` 打到终端上 —— 用户第一反应是
+  「这程序坏了」。现在只吞「对端断了」这一类（`ConnectionResetError` /
+  `ConnectionAbortedError` / `BrokenPipeError` / `TimeoutError`），别的异常照旧
+  报出来。实测：20 条连接发完请求立刻关掉，修之前 20 段 traceback，修之后 0 段。
+  顺带量了线程数：基线 2 → 200 次串行 2 → 200 次并发 2 → 20 条半开连接 22 →
+  全部关闭后 2，没有线程泄漏。
 - **「页面里没替换的占位符」只有手工替换的检查，真发一次 HTTP 没人验。**
   `check_page_markup` 是自己把 `__TOKEN__` 替换掉再查结构的 —— `_send` 里漏
   替换一个占位符，它照样绿，而用户打开浏览器看到的是一段 `__TOKEN__`，点任何
