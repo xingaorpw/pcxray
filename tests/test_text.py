@@ -195,6 +195,53 @@ class TestWrapCjkPunctuation(unittest.TestCase):
         self.assertEqual(text.wrap("第一行\n第二行", 40), ["第一行", "第二行"])
 
 
+class TestControlCharactersCannotReachTheTerminal(unittest.TestCase):
+    """终端转义序列是终端里的 XSS。
+
+    注册表值名除了反斜杠和 NUL 什么字符都允许，任务名和 exe 路径也一样 ——
+    这些都是不受我们控制的数据。一条自启项叫 `\x1b[2J` + 一堆字，`pcxray list`
+    打到一半就把屏幕清了（实测复现过）。显示层必须换掉控制字符，数据层不能动。
+    """
+
+    def test_safe_shows_control_chars_as_text(self):
+        self.assertEqual(text.safe("a\x1bb"), "a\\x1bb")
+        self.assertEqual(text.safe("行\r尾"), "行\\x0d尾")
+        self.assertEqual(text.safe("\x00\x7f"), "\\x00\\x7f")
+
+    def test_safe_leaves_normal_text_alone(self):
+        self.assertEqual(text.safe("普通名字 123 .exe"), "普通名字 123 .exe")
+
+    def test_table_cells_are_sanitized(self):
+        lines = text.table(["名称"], [["\x1b[2Jevil"]])
+        joined = "\n".join(lines)
+        self.assertNotIn("\x1b", joined)
+        self.assertIn("\\x1b[2Jevil", joined)
+
+    def test_wrap_sanitizes_but_keeps_newlines(self):
+        lines = text.wrap("第一段\n第二段\x1b[0m", 40)
+        self.assertEqual(len(lines), 2)
+        self.assertIn("第一段", lines[0])
+        self.assertNotIn("\x1b", "".join(lines))
+        self.assertIn("\\x1b[0m", lines[1])
+
+    def test_wrap_with_zero_limit_also_sanitizes(self):
+        lines = text.wrap("a\x1bb", 0)
+        self.assertNotIn("\x1b", lines[0])
+        self.assertIn("\\x1b", lines[0])
+
+
+class TestPunctuationHangIsBounded(unittest.TestCase):
+    """标点不能出现在行首，但让行不能无限堆。
+
+    连着好几个标点时，以前每个都往上一行堆 —— limit=4 能堆出一行 10 格宽，
+    表格和提示跟着歪。
+    """
+
+    def test_a_run_of_punctuation_does_not_blow_up_one_line(self):
+        lines = text.wrap("字" * 3 + "，。！？）" * 4, 6)
+        self.assertTrue(all(text.width(line) <= 6 + 2 for line in lines), [text.width(x) for x in lines])
+
+
 class TestMbRounding(unittest.TestCase):
     """单位判断要看显示出来的数，不能看原始数。
 

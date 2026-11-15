@@ -14,6 +14,25 @@ import unicodedata
 __all__ = ["width", "widest", "pad", "truncate", "table", "wrap"]
 
 
+def safe(value: object) -> str:
+    """把控制字符换成看得见的 `\x1b` 这种写法。
+
+    终端转义序列是终端里的 XSS：一条自启项只要名字里带 `\x1b[2J`，`pcxray list`
+    打到一半就把屏幕清了（实测过，真能复现）。注册表值名除了反斜杠和 NUL 什么
+    字符都允许，任务名、exe 路径也一样 —— 这些都是不受我们控制的数据。
+
+    只改显示，不改数据：`--json` 输出的是原样字符串，脚本那边要能拿到真值。
+    """
+    out = []
+    for ch in str(value):
+        code = ord(ch)
+        if code < 0x20 or code == 0x7F or 0x80 <= code <= 0x9F:
+            out.append(f"\\x{code:02x}")
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
 def _char_width(ch: str) -> int:
     if unicodedata.combining(ch):
         return 0
@@ -78,6 +97,8 @@ def table(
     """
     if not rows:
         return ["  （没有内容）"]
+    headers = [safe(h) for h in headers]
+    rows = [[safe(cell) for cell in row] for row in rows]
     cols = len(headers)
     aligns = aligns or ["left"] * cols
     if limits:
@@ -116,8 +137,14 @@ def wrap(text: str, limit: int, indent: str = "") -> list[str]:
     要么整行超宽，要么被截断丢字。这里按字符宽度贪心填，填满时优先回退到
     最近的空格（英文好看），退不回去就硬断（中文正常）。
     """
+    text = str(text)
+    if "\n" in text:
+        # 先把除了换行以外的控制字符换掉，换行本身要留着分段
+        text = "\n".join(safe(part) for part in text.split("\n"))
+    else:
+        text = safe(text)
     if limit <= 0:
-        return [indent + str(text)]
+        return [indent + text]
     lines: list[str] = []
     for raw in str(text).split("\n"):
         current = ""
@@ -135,7 +162,9 @@ def wrap(text: str, limit: int, indent: str = "") -> list[str]:
                     current, used = "", 0
             # 中文标点不能出现在行首（「，而不是…」这种读起来像错行）。遇到这种
             # 字符就让它跟着上一行走，宁可这一行超一个字的宽度。
-            if not current and ch in _NO_LINE_START and lines:
+            # 但上一行已经超了就别再往上堆：连着好几个标点会让一行无限长（实测
+            # 过，limit=4 时能堆出一行 10 格宽），表格和提示都会跟着歪。
+            if not current and ch in _NO_LINE_START and lines and width(lines[-1]) <= limit:
                 lines[-1] += ch
                 continue
             current += ch

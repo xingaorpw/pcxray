@@ -423,6 +423,31 @@ class TestCommandWiring(unittest.TestCase):
         self.assertTrue(kwargs["force"])
         self.assertEqual(kwargs["mode"], "move")
 
+    def test_json_keeps_control_characters_raw(self):
+        """显示层换掉控制字符，但 --json 必须给原样字符串。
+
+        脚本那边要能拿到真值（哪怕是 `\x1b[2J`）。这条是防「顺手把 JSON 也
+        洗一遍」的改动 —— 那不是修复，是让数据说谎。
+        """
+        entry = autostart.Entry(
+            name="\x1b[2Jevil",
+            kind="run",
+            source="用户 Run",
+            scope="user",
+            command=r"C:\Windows\System32\notepad.exe",
+            exe=r"C:\Windows\System32\notepad.exe",
+            enabled=True,
+            locator={"hive": "HKCU", "subkey": r"Software\Microsoft\Windows\CurrentVersion\Run", "value": "evil"},
+        )
+        out = io.StringIO()
+        with mock.patch.object(cli.autostart, "scan", return_value=([entry], [])), mock.patch.object(
+            cli.winapi, "processes", return_value=[]
+        ), contextlib.redirect_stdout(out):
+            code = cli.main(["list", "--json"])
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["autostart"]["items"][0]["name"], "\x1b[2Jevil")
+
     def test_restore_prints_which_backup_was_used(self):
         out = io.StringIO()
         with mock.patch.object(
