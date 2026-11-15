@@ -25,6 +25,10 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **「改完读回来对一遍」这段逻辑一直没有测试。** `_set_service` / `_set_task` 只在
+  真机往返测试里被覆盖（要管理员、要 PowerShell），判断「算不算成功」的那段本身没有
+  测试。补了 6 条：读回来一致才算成功、不一致报出读到的值、读回来是空的也算失败、
+  PowerShell 的拒绝理由要原样传上来。
 - **22 个登录/开机任务的「程序」一栏是空的，一句话都不说。** 46 个任务里有 22 个
   的 Actions 是空的 —— 它们靠 COM 处理器启动，不跑命令行。空白的程序一栏看起来像
   「这个任务什么都不干」，恰恰相反。现在备注写「没有命令行，靠 COM 启动」。

@@ -12,7 +12,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from pcxray import actions, autostart
+from pcxray import actions, autostart, pwsh
 
 
 def entry(name="X", kind="run", scope="user", protected=False):
@@ -464,6 +464,53 @@ class TestRestoreOldStyleMoveBackup(unittest.TestCase):
         delete.assert_called_once()
         self.assertEqual(delete.call_args[0][2], "~pcxray~旧条目", "要把改名后的那条删掉")
         self.assertIn((r"Software\Microsoft\Windows\CurrentVersion\Run", "旧条目"), written)
+
+
+class TestSetServiceVerifiesByReadingBack(unittest.TestCase):
+    """改完必须读回来对一遍，不能只凭 PowerShell 没报错就报成功。
+
+    以前这两条只被真机往返测试覆盖（要管理员、要 PowerShell）；判断「算不算成功」
+    的那段逻辑本身没有测试。
+    """
+
+    def test_service_manual_success(self):
+        with mock.patch.object(pwsh, "run_text", return_value=(True, "Manual\n", "")):
+            ok, message = actions._set_service("X", False)
+        self.assertTrue(ok, message)
+        self.assertIn("手动", message)
+
+    def test_service_reports_when_readback_disagrees(self):
+        with mock.patch.object(pwsh, "run_text", return_value=(True, "Auto\n", "")):
+            ok, message = actions._set_service("X", False)
+        self.assertFalse(ok)
+        self.assertIn("改完读回来的启动方式是「Auto」", message)
+
+    def test_service_propagates_powershell_reason(self):
+        with mock.patch.object(
+            pwsh, "run_text", return_value=(False, "", "拒绝访问")
+        ):
+            ok, message = actions._set_service("X", True)
+        self.assertFalse(ok)
+        self.assertIn("拒绝访问", message)
+
+    def test_task_disabled_success(self):
+        with mock.patch.object(pwsh, "run_text", return_value=(True, "Disabled\n", "")):
+            ok, message = actions._set_task("\\", "T", False)
+        self.assertTrue(ok, message)
+        self.assertIn("Disabled", message)
+
+    def test_task_reports_when_readback_disagrees(self):
+        with mock.patch.object(pwsh, "run_text", return_value=(True, "Ready\n", "")):
+            ok, message = actions._set_task("\\", "T", False)
+        self.assertFalse(ok)
+        self.assertIn("改完读回来的状态是「Ready」", message)
+
+    def test_task_empty_readback_is_a_failure(self):
+        # 读回来是空的：不知道成没成，不能当成功
+        with mock.patch.object(pwsh, "run_text", return_value=(True, "", "")):
+            ok, message = actions._set_task("\\", "T", True)
+        self.assertFalse(ok)
+        self.assertIn("空", message)
 
 
 class TestServiceOnIsAlwaysANoop(unittest.TestCase):
