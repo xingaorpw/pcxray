@@ -25,6 +25,15 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **「不许用 3.10+」这条检查，`from X import Y` 写法能溜过去。** 它原来是一串
+  正则，只认 `itertools.pairwise` 这种点号写法；`from datetime import UTC`、
+  `from typing import Self`、`from enum import StrEnum` 全部漏网。改成 AST
+  之后两种写法都认，规则表从 10 条扩到 22 条（含 `tomllib`、`copy.replace`、
+  `asyncio.TaskGroup`、`Path.walk`）。更要紧的是**检查自己现在也被检查**：
+  每条规则必须能抓到自己那条例子，3.9 合法的写法（`os.walk`、`zip(a, b)`）
+  一条都不许报。反证过三种坏法：不认 from 写法 → 红 3 条；规则表名字写错 →
+  红 1 条；把 `zip(strict=)` 塞进「合法」样本 → 误报被抓。往产品代码里塞
+  `from datetime import UTC`，实测红。
 - **扫描之后那条自启项被别的程序删了，`off` 照样回「✓ 已关掉」。** 自启项是
   所有程序共享的，扫描和动手之间隔着几秒。实测：建一个探针值 → 扫描 → 删掉
   探针 → `disable`，结果报「已关掉（重启后生效）」，而且真的往

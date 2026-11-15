@@ -1257,31 +1257,120 @@ def check_no_third_party_imports() -> None:
     )
 
 
+# 3.10+ 才有的「模块.属性」。写成表而不是一串正则：正则只认 `itertools.pairwise`
+# 这种点号写法，`from itertools import pairwise` 照样溜过去。
+_NEWER_MODULE_ATTRS = {
+    ("itertools", "pairwise"): "3.10",
+    ("itertools", "batched"): "3.12",
+    ("datetime", "UTC"): "3.11",
+    ("typing", "Self"): "3.11",
+    ("typing", "Never"): "3.11",
+    ("typing", "override"): "3.12",
+    ("asyncio", "TaskGroup"): "3.11",
+    ("asyncio", "timeout"): "3.11",
+    ("enum", "StrEnum"): "3.11",
+    ("contextlib", "aclosing"): "3.10",
+    ("contextlib", "chdir"): "3.11",
+    ("hashlib", "file_digest"): "3.11",
+    ("math", "exp2"): "3.11",
+    ("base64", "b32hexencode"): "3.10",
+    ("copy", "replace"): "3.13",
+    ("sys", "exception"): "3.11",
+}
+# 整个模块都是新的
+_NEWER_MODULES = {"tomllib": "3.11"}
+
+# 方法调用和语法糖，正则更直接。`(?<!os)` 是必要的：`os.walk` 从 2.x 就有。
+_NEWER_CALLS = {
+    "int.bit_count()": (r"\.bit_count\(", "3.10"),
+    "Path.walk()": (r"(?<!os)\.walk\(", "3.12"),
+    "zip(strict=)": (r"zip\([^)]*strict\s*=", "3.10"),
+    "dataclasses kw_only": (r"kw_only\s*=", "3.10"),
+    "isinstance 用 |": (r"isinstance\([^)]*\|", "3.10"),
+}
+
+
+def _newer_api_hits(text: str) -> list[str]:
+    """这段代码用了哪些 3.10+ 才有的东西。"""
+    import ast as _ast
+
+    hits: list[str] = []
+    for label, (pattern, version) in _NEWER_CALLS.items():
+        if re.search(pattern, text):
+            hits.append(f"{label}（{version}+）")
+    try:
+        tree = _ast.parse(text)
+    except SyntaxError:
+        return hits
+    for node in _ast.walk(tree):
+        if isinstance(node, _ast.Attribute) and isinstance(node.value, _ast.Name):
+            key = (node.value.id, node.attr)
+            if key in _NEWER_MODULE_ATTRS:
+                hits.append(f"{key[0]}.{key[1]}（{_NEWER_MODULE_ATTRS[key]}+）")
+        elif isinstance(node, _ast.Import):
+            for alias in node.names:
+                if alias.name in _NEWER_MODULES:
+                    hits.append(f"{alias.name}（{_NEWER_MODULES[alias.name]}+）")
+        elif isinstance(node, _ast.ImportFrom) and node.module:
+            if node.module in _NEWER_MODULES:
+                hits.append(f"{node.module}（{_NEWER_MODULES[node.module]}+）")
+            for alias in node.names:
+                key = (node.module, alias.name)
+                if key in _NEWER_MODULE_ATTRS:
+                    hits.append(
+                        f"from {key[0]} import {key[1]}（{_NEWER_MODULE_ATTRS[key]}+）"
+                    )
+    return hits
+
+
+# 这份表是给检查自己用的：每条规则都必须能抓到自己的例子，否则规则是坏的。
+_NEWER_SAMPLES = {
+    "点号写法": "import itertools\nitertools.pairwise([1])",
+    "from 写法": "from itertools import pairwise",
+    "datetime.UTC": "import datetime\ndatetime.UTC",
+    "typing.Self": "from typing import Self",
+    "tomllib": "import tomllib",
+    "bit_count": "x = 5\nx.bit_count()",
+    "zip strict": "zip(a, b, strict=True)",
+    "TaskGroup": "import asyncio\nasyncio.TaskGroup",
+    "StrEnum": "from enum import StrEnum",
+    "copy.replace": "import copy\ncopy.replace(x)",
+}
+# 3.9 上完全合法的写法，一条都不许报
+_OK_ON_39 = (
+    "import os\nimport datetime\nfrom itertools import chain\n"
+    "os.walk('.')\nzip(a, b)\ndatetime.datetime.now()\nx.removeprefix('a')\n"
+    "print(sorted([3, 1]))\n"
+)
+
+
 def check_no_newer_stdlib_apis() -> None:
     """不许用 Python 3.10+ 才有的库函数 —— 徽章写着 3.9 起。
 
     `ast.parse(feature_version=(3,9))` 只能抓语法（比如 `match`），抓不到
     「语法没问题但这个函数 3.10 才有」。本机只有 3.13，跑测试永远是绿的。
+
+    这里连检查自己一起验：每条规则都要能抓到自己那条例子，3.9 合法的写法
+    一条都不许报。规则写错时（比如只认 `itertools.pairwise` 不认
+    `from itertools import pairwise`）会当场红。
     """
-    newer = {
-        "zip(strict=)": r"zip\([^)]*strict\s*=",
-        "itertools.pairwise": r"\bitertools\.pairwise\b",
-        "int.bit_count()": r"\.bit_count\(",
-        "datetime.UTC": r"\bdatetime\.UTC\b",
-        "tomllib": r"\btomllib\b",
-        "typing.Self": r"\btyping\.Self\b",
-        "ExceptionGroup": r"\bExceptionGroup\b",
-        "asyncio.timeout": r"\basyncio\.timeout\b",
-        "dataclasses kw_only": r"kw_only\s*=",
-        "isinstance 用 |": r"isinstance\([^)]*\|",
-    }
+    broken = [name for name, sample in _NEWER_SAMPLES.items() if not _newer_api_hits(sample)]
+    check(
+        "3.10+ 检查自己的规则有效",
+        not broken,
+        "" if not broken else f"这些规则抓不到自己的例子：{'、'.join(broken)}",
+    )
+    false_alarm = _newer_api_hits(_OK_ON_39)
+    check(
+        "3.9 合法的写法不被误报",
+        not false_alarm,
+        "" if not false_alarm else f"误报：{'、'.join(false_alarm)}",
+    )
     found: list[str] = []
     for path in sorted(glob.glob("pcxray/*.py")):
         text = open(path, encoding="utf-8").read()
-        for label, pattern in newer.items():
-            for match in re.finditer(pattern, text):
-                line = text[: match.start()].count("\n") + 1
-                found.append(f"{label} @ {path}:{line}")
+        for hit in _newer_api_hits(text):
+            found.append(f"{hit} @ {path}")
     check(
         "没用到 3.10+ 才有的函数",
         not found,
