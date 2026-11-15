@@ -25,6 +25,12 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **扫描之后那条自启项被别的程序删了，`off` 照样回「✓ 已关掉」。** 自启项是
+  所有程序共享的，扫描和动手之间隔着几秒。实测：建一个探针值 → 扫描 → 删掉
+  探针 → `disable`，结果报「已关掉（重启后生效）」，而且真的往
+  `StartupApproved\Run32` 写了一个**指向不存在条目的孤儿标记**。现在动手前先查
+  一次「这条还在不在」，不在就报「已经不在了（可能被别的程序删掉了），跳过」，
+  一个字节都不写。`--mode move` 同理。反证过：去掉检查 → 测试立刻红。
 - **`pcxray restore` 指到一个不是备份的 JSON，直接抛 traceback。**
   `restore` 接受任意路径 —— 用户完全可能指到 `package.json`、手改过的文件、
   或者写到一半断电的备份。顶层是列表 / null / 字符串 / 数字时，

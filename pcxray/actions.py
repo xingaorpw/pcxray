@@ -502,6 +502,15 @@ def _apply(plan: dict, turn_on: bool) -> Result:
     kind = plan["kind"]
     if kind == "flag":
         hive, subkey, value_name = plan["hive"], plan["subkey"], plan["value_name"]
+        # 扫描之后、动手之前，别的程序可能已经把这条删了（自启项是共享的）。
+        # 不查一下就会写个「开关标记」然后报「已关掉」—— 其实那条早就没了，
+        # 用户以为办成了。实测：删掉探针值再 disable，照样回「✓ 已关掉」。
+        # 查的是**自启项本身**（Run 里的那个值 / 启动文件夹里那个文件），
+        # 不是 StartupApproved 里的标记 —— 那个标记本来就常常还不存在。
+        if not _item_still_there(plan):
+            return Result(
+                plan["name"], False, f"{value_name} 已经不在了（可能被别的程序删掉了），跳过"
+            )
         data = _ENABLED if turn_on else _disabled_now()
         try:
             _write_value(hive, subkey, value_name, data)
@@ -524,8 +533,9 @@ def _apply(plan: dict, turn_on: bool) -> Result:
     if kind == "move":
         hive, source_key = plan["hive"], plan["subkey"]
         target_key = plan.get("target_subkey") or source_key
-        if not plan["existed"]:
+        if not plan["existed"] or not _value_exists(hive, source_key, plan["old_name"]):
             # 源值不在，就没有东西可以挪。报成功会让用户以为办成了，其实什么都没发生。
+            # 扫描时还在、动手时已经没了，也一样 —— 所以这里现查一遍。
             return Result(plan["name"], False, f"找不到 {plan['old_name']}，可能已经被改过或删掉了")
         try:
             _write_value(

@@ -539,6 +539,68 @@ class TestRestoreRejectsMalformedBackups(unittest.TestCase):
         self.assertIn("没有", results[0].message)
 
 
+class TestApplyChecksTheItemIsStillThere(unittest.TestCase):
+    """扫描之后、动手之前，别的程序可能已经把那条自启项删了。
+
+    自启项是所有程序共享的。以前遇到这种情况照样写个「开关标记」，然后回
+    「✓ 已关掉（重启后生效）」—— 那条其实早就没了，用户以为办成了，还在
+    `StartupApproved` 里留下一个指向不存在条目的孤儿标记（实测确实留下了）。
+    """
+
+    FLAG = {
+        "kind": "flag",
+        "name": "X",
+        "hive": "HKCU",
+        "subkey": "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run32",
+        "value_name": "V",
+        "target_subkey": "Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Run",
+        "existed": False,
+        "old": None,
+        "old_str": None,
+    }
+
+    MOVE = {
+        "kind": "move",
+        "name": "X",
+        "hive": "HKCU",
+        "subkey": "Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+        "target_subkey": "Software\\Microsoft\\Windows\\CurrentVersion\\Run-pcxray-disabled",
+        "old_name": "X",
+        "new_name": "X",
+        "existed": True,
+        "value": "C:\\a.exe",
+        "value_kind": 1,
+    }
+
+    def test_flag_op_that_vanished_is_not_reported_as_done(self):
+        with mock.patch.object(actions, "_item_still_there", return_value=False), \
+                mock.patch.object(actions, "_write_value") as write:
+            result = actions._apply(dict(self.FLAG), turn_on=False)
+        self.assertFalse(result.ok, "明明什么都没改，却报成功了")
+        self.assertIn("已经不在了", result.message, result.message)
+        write.assert_not_called()
+
+    def test_flag_op_that_is_still_there_still_works(self):
+        """别修过头：这条还在的时候，照旧要能改。"""
+        with mock.patch.object(actions, "_item_still_there", return_value=True), \
+                mock.patch.object(actions, "_write_value"), \
+                mock.patch.object(
+                    actions, "_read_value", side_effect=lambda *a: (True, actions._ENABLED, 3)
+                ):
+            result = actions._apply(dict(self.FLAG), turn_on=True)
+        self.assertTrue(result.ok, result.message)
+
+    def test_move_op_that_vanished_is_not_moved(self):
+        with mock.patch.object(actions, "_value_exists", return_value=False), \
+                mock.patch.object(actions, "_write_value") as write, \
+                mock.patch.object(actions, "_delete_value") as delete:
+            result = actions._apply(dict(self.MOVE), turn_on=False)
+        self.assertFalse(result.ok)
+        self.assertIn("找不到", result.message, result.message)
+        write.assert_not_called()
+        delete.assert_not_called()
+
+
 class TestDescribe(unittest.TestCase):
     def test_flag(self):
         text = actions._describe({"kind": "flag", "subkey": "A\\B\\Run"}, False)
@@ -1128,6 +1190,8 @@ class TestRepeatedChangesAreNoOps(unittest.TestCase):
         for patcher in (
             mock.patch.object(actions, "_read_value", side_effect=read),
             mock.patch.object(actions, "_write_value", side_effect=write),
+            # 这几条测的是「重复操作要不要再写一遍」，前提是这一条确实还在
+            mock.patch.object(actions, "_item_still_there", return_value=True),
         ):
             patcher.start()
             self.addCleanup(patcher.stop)
