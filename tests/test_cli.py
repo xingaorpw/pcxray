@@ -288,6 +288,13 @@ class TestEmptyNameIsExplained(unittest.TestCase):
         for problem in problems:
             self.assertIn("名字不能是空的", problem.message)
 
+    def test_not_found_points_at_restore(self):
+        # 用 pcxray 关掉的服务会从列表里消失（它不再是自动启动），只让用户
+        # 「跑 list 看看名字」等于把人带进死路
+        _picked, problems = cli._pick([], ["某个刚被关掉的服务"])
+        self.assertEqual(len(problems), 1)
+        self.assertIn("pcxray restore", problems[0].message)
+
     def test_off_with_empty_name_exits_nonzero(self):
         out = io.StringIO()
         with mock.patch.object(cli, "_load_entries", return_value=([], [])), contextlib.redirect_stdout(out):

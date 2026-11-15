@@ -342,7 +342,14 @@ def _pick(entries, names: list[str]) -> tuple[list[autostart.Entry], list[action
                 )
             )
         else:
-            problems.append(actions.Result(name, False, "没有这一条，先跑 pcxray list 看看名字"))
+            problems.append(
+                actions.Result(
+                    name,
+                    False,
+                    "没有这一条，先跑 pcxray list 看看名字"
+                    "（如果是刚才用 pcxray 关掉的，`pcxray restore` 能放回去）",
+                )
+            )
     return picked, problems
 
 

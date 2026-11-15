@@ -466,6 +466,33 @@ class TestRestoreOldStyleMoveBackup(unittest.TestCase):
         self.assertIn((r"Software\Microsoft\Windows\CurrentVersion\Run", "旧条目"), written)
 
 
+class TestServiceOnIsAlwaysANoop(unittest.TestCase):
+    """列表里的服务都是 `StartMode='Auto'` 扫出来的，本来就开着。
+
+    再调一次 Set-Service 等于什么都没改，却会存一份备份、报一句「已改成自动启动」。
+    """
+
+    def _entry(self):
+        return autostart.Entry(
+            name="SomeAutoSvc",
+            kind="service",
+            source="自动启动的服务",
+            scope="machine",
+            enabled=True,
+            locator={"name": "SomeAutoSvc"},
+        )
+
+    def test_on_is_a_noop(self):
+        plan = actions._plan(self._entry(), True, actions.MODE_FLAG)
+        self.assertTrue(plan.get("noop"))
+        self.assertIn("本来就是自动启动", plan["noop_message"])
+
+    def test_off_still_plans_a_change(self):
+        plan = actions._plan(self._entry(), False, actions.MODE_FLAG)
+        self.assertEqual(plan["kind"], "service")
+        self.assertEqual(plan["service"], "SomeAutoSvc")
+
+
 class TestMovedEntryInFlagMode(unittest.TestCase):
     """被 --mode move 挪走的条目，标记模式对它没有意义。
 

@@ -25,6 +25,12 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **`pcxray on <服务>` 什么都没改，却存一份备份、报「已改成自动启动」。** 列表里的
+  服务都是 `StartMode='Auto'` 扫出来的，本来就开着。现在直接说「本来就是自动启动的
+  服务，没动」。
+- **用 pcxray 关掉的服务会从列表里消失，再 `on` 就只得到「没有这一条」。** 那句提示
+  把人带进死路（`list` 里也不会有它）。现在补一句「如果是刚才用 pcxray 关掉的，
+  `pcxray restore` 能放回去」。
 - **坏掉的备份记录会让还原崩，或者替备份编事实。** `old` 字段不是合法十六进制时
   `bytes.fromhex` 直接抛 ValueError（一屏 traceback）；缺 `subkey` 时提示是「这台机器
   上没有这个注册表位置：」（空冒号）；task/service 记录缺 `was_enabled` 时会说

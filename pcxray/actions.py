@@ -391,6 +391,14 @@ def _plan(entry, turn_on: bool, mode: str) -> dict | None:
             "name": entry.name,
         }
     if entry.kind == "service":
+        if turn_on:
+            # 列表里的服务都是 `StartMode='Auto'` 扫出来的，本来就开着。再调一次
+            # Set-Service 等于什么都没改，却会存一份备份、报一句「已改成自动启动」。
+            return {
+                "name": entry.name,
+                "noop": True,
+                "noop_message": "本来就是自动启动的服务，没动",
+            }
         return {
             "kind": "service",
             "service": locator.get("name", entry.name),
