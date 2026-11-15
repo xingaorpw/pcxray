@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import threading
 import unittest
@@ -418,8 +420,13 @@ class TestPortHandling(unittest.TestCase):
         holder.listen(1)
         self.addCleanup(holder.close)
         scanned = []
+        buffer = io.StringIO()
         with mock.patch.object(web, "_snapshot", lambda **kw: scanned.append(1) or None):
-            code = web.serve(port=port, open_browser=False)
+            with contextlib.redirect_stdout(buffer):
+                code = web.serve(port=port, open_browser=False)
+        # 报错信息必须提到「端口」和换一个的出路，不能只丢个 WinError 给用户
+        self.assertIn("端口", buffer.getvalue())
+        self.assertIn("--port 0", buffer.getvalue())
         self.assertEqual(code, 1)
         self.assertEqual(scanned, [], "端口都起不来，不该先去扫描")
 
