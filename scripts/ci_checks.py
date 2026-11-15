@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import glob
 import json
 import os
 import tempfile
@@ -757,6 +758,107 @@ def check_json_timestamps() -> None:
     check("generated 是可解析的本地时间", ok, f"读到 {generated!r}")
 
 
+def check_move_mode_round_trip() -> None:
+    r"""`--mode move` 是唯一能当场验证「真的不会启动了」的关法，得端到端跑一遍。
+
+    写一个探针值到 `HKCU\...\WOW6432Node\...\Run`（不需要管理员），然后
+    `off --mode move` → 值必须出现在 `Run-pcxray-disabled`、`Run` 里没有；
+    `on --mode move` → 必须原样搬回 `Run`。全程用临时 HOME，不碰用户真实备份。
+    """
+    import tempfile
+    import winreg
+
+    from pcxray import winapi
+
+    if not winapi.IS_WINDOWS:
+        print("  · 跳过 --mode move 往返（不是 Windows）")
+        return
+
+    name = "pcxray_selftest_move"
+    base = r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Run"
+    disabled = base + "-pcxray-disabled"
+
+    def read(subkey: str):
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, subkey) as handle:
+                return winreg.QueryValueEx(handle, name)[0]
+        except FileNotFoundError:
+            return None
+
+    def run_cli(args: list[str], home: str) -> tuple[int, str]:
+        env = dict(os.environ)
+        env["USERPROFILE"] = home
+        env["HOME"] = home
+        env["PYTHONIOENCODING"] = "utf-8"
+        done = subprocess.run(
+            [sys.executable, "-m", "pcxray"] + args,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            env=env,
+            timeout=300,
+        )
+        return done.returncode, done.stdout + done.stderr
+
+    with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, base) as handle:
+        winreg.SetValueEx(handle, name, 0, winreg.REG_SZ, r"C:\Windows\SysWOW64\notepad.exe")
+    try:
+        with tempfile.TemporaryDirectory() as home:
+            code, out = run_cli(["off", name, "--mode", "move"], home)
+            check("挪走：命令成功", code == 0, out.strip()[-120:] if code else "")
+            still_there = read(base)
+            check("挪走：值离开了 Run", still_there is None, "" if still_there is None else repr(still_there))
+            moved = read(disabled)
+            want = r"C:\Windows\SysWOW64\notepad.exe"
+            check("挪走：值到了 Run-pcxray-disabled", moved == want, "" if moved == want else repr(moved))
+            code, out = run_cli(["on", name, "--mode", "move"], home)
+            check("挪回：命令成功", code == 0, out.strip()[-120:] if code else "")
+            back = read(base)
+            check("挪回：值回到了 Run", back == want, "" if back == want else repr(back))
+            left = read(disabled)
+            check("挪回：Run-pcxray-disabled 里没留下副本", left is None, "" if left is None else repr(left))
+    finally:
+        for subkey in (base, disabled):
+            try:
+                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, subkey, 0, winreg.KEY_SET_VALUE) as handle:
+                    winreg.DeleteValue(handle, name)
+            except FileNotFoundError:
+                pass
+
+
+def check_no_syntax_warnings() -> None:
+    r"""所有模块都不许有 SyntaxWarning。
+
+    Python 3.12 起，字符串里写 `HKCU\StartupFolder` 这种「无效转义」会在
+    **编译时**打一行 SyntaxWarning 到 stderr。3.9-3.11 只是静默的
+    DeprecationWarning，所以本地跑得好好的，用户机器上第一次运行就多出一行
+    莫名其妙的东西 —— 更糟的是任何「stderr 必须为空」的断言会挂。这条检查把
+    每个文件都编译一遍，把警告当错误。
+    """
+    import py_compile
+    import tempfile
+    import warnings
+
+    paths = sorted(glob.glob("pcxray/*.py")) + sorted(glob.glob("scripts/*.py"))
+    paths += sorted(glob.glob("tests/*.py"))
+    bad: list[str] = []
+    for path in paths:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            try:
+                py_compile.compile(
+                    path,
+                    cfile=os.path.join(tempfile.gettempdir(), "pcxray_warn_probe.pyc"),
+                    doraise=True,
+                )
+            except py_compile.PyCompileError as exc:
+                bad.append(f"{path} 编译失败：{str(exc).splitlines()[0][:80]}")
+                continue
+        for item in caught:
+            bad.append(f"{path}：{item.category.__name__}: {item.message}")
+    check("没有 SyntaxWarning", not bad, "；".join(bad[:3]))
+
+
 def main() -> int:
     print("端到端自检")
     check_bad_arguments()
@@ -771,6 +873,8 @@ def main() -> int:
     check_page_js_reports_scan_failure()
     check_json_memory_keys()
     check_json_timestamps()
+    check_move_mode_round_trip()
+    check_no_syntax_warnings()
     check_readme_test_count()
     check_python39_syntax()
     print()

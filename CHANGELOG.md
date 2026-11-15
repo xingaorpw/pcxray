@@ -25,6 +25,20 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **Python 3.12+ 上第一次运行会多打一行 SyntaxWarning。** 我上一轮写的
+  docstring 里直接写了 `HKCU\StartupFolder`、`HKCU\...\WOW6432Node\...\Run`，
+  在非 raw 字符串里 `\S` / `\.` 都是无效转义。3.9-3.11 只是静默的
+  DeprecationWarning，3.12 起**编译时**就往 stderr 打一行 SyntaxWarning ——
+  用户第一次跑会看到一行莫名其妙的东西，任何「stderr 必须为空」的判断也会挂
+  （反证时真把一条无关的检查带红了）。三处 docstring 都改成 `r"""`，
+  ci_checks 加了 `没有 SyntaxWarning`：把 `pcxray/`、`scripts/`、`tests/` 每个
+  文件都编译一遍，警告当错误。
+- **`--mode move` 的往返没有端到端检查。** 它是唯一能**当场**确认「真的不会
+  启动了」的关法，之前只有手工试过。现在 ci_checks 会写一个探针到
+  `HKCU\...\WOW6432Node\...\Run`（不需要管理员），`off --mode move` 之后值必须
+  出现在 `Run-pcxray-disabled`、`Run` 里没有，`on --mode move` 之后必须原样搬回，
+  而且 `Run-pcxray-disabled` 里不许留副本。反证过：让「挪回」什么都不做，
+  三条立刻红。
 - **启动文件夹的项关掉之后，`restore` 什么也不做还骗你「已经不在了」。** 备份
   记录里文件夹项的 `target_subkey` 是 `StartupFolder` —— 那是 `StartupApproved`
   的栏名，不是注册表路径。还原时的「这条还在不在」一律拿它去 `HKCU\StartupFolder`

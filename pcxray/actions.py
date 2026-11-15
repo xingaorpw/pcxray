@@ -668,7 +668,7 @@ def _backup_is_usable(path: str) -> bool:
 
 
 def _item_still_there(op: dict) -> bool:
-    """这条自启项本身还在不在。
+    r"""这条自启项本身还在不在。
 
     注册表项看 `Run` 那个键里还有没有这个值；**启动文件夹项看那个文件还在不在**。
 

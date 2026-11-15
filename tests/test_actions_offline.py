@@ -362,7 +362,7 @@ class TestFolderItemInMoveMode(unittest.TestCase):
 
 
 class TestFolderItemIsFoundByFileNotRegistry(unittest.TestCase):
-    """启动文件夹的项在不在，要看那个文件在不在。
+    r"""启动文件夹的项在不在，要看那个文件在不在。
 
     备份记录里文件夹项的 `target_subkey` 是 `StartupFolder` —— 那是
     `StartupApproved` 的栏名，不是注册表路径。以前一律拿它去 `HKCU\StartupFolder`
