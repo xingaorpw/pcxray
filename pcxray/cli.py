@@ -353,8 +353,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if getattr(args, "elevate", False) and not winapi.is_admin():
-        if winapi.elevate():
-            print("  已以管理员身份重新打开，请在新的窗口里看结果。")
+        if winapi.elevate(argv):
+            print("  已请求提权：在 UAC 弹窗里点「是」，结果会显示在新打开的窗口里。")
+            print("  如果那个窗口一闪就没了，说明提权失败 —— 用普通权限重跑一次就行。")
             return 0
         print("  提权被取消或失败，继续用普通权限运行（会少看到一部分进程信息）")
         print("")

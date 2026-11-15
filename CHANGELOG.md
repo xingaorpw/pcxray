@@ -25,6 +25,12 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **`--elevate` 提权后打开的新窗口是坏的。** 拼出来的子进程命令是
+  `python.exe list --elevate` —— 丢了 `-m pcxray`，python 会去找一个叫 `list`
+  的文件，报 `can't open file 'list'`，新窗口闪一下就没了，而父进程还在说
+  「已以管理员身份重新打开」。现在拼的是 `python -m pcxray list`，并且剔掉
+  `--elevate` 自己。提示语也改成「已请求提权，在 UAC 里点『是』；如果窗口一闪
+  就没了说明提权失败」。
 - **并发改自启时备份文件撞名。** 网页是多线程的，几个请求同时到达时，
   「先 `os.path.exists` 判重、再写同一个 `.tmp`」两步之间没有原子性，第二个
   请求直接 `WinError 32 另一个程序正在使用此文件`，用户看到「备份写不进去，

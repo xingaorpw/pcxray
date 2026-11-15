@@ -506,7 +506,21 @@ def is_admin() -> bool:
         return False
 
 
-def elevate() -> bool:
+def elevate_params(args: list[str] | None = None) -> str:
+    """提权时要传给 python.exe 的参数串。
+
+    必须带 `-m pcxray`：以前直接拼 `sys.argv[1:]`，于是提权后的子进程变成
+    `python.exe list --elevate` —— python 会去找一个叫 `list` 的文件，报
+    「can't open file 'list'」，新窗口闪一下就没了，而父进程还在说
+    「已以管理员身份重新打开」。这条路径真跑起来就是坏的。
+
+    `--elevate` 本身要剔掉：子进程已经是管理员，留着只是让逻辑多绕一圈。
+    """
+    cleaned = [a for a in (sys.argv[1:] if args is None else args) if a != "--elevate"]
+    return subprocess.list2cmdline(["-m", "pcxray"] + cleaned)
+
+
+def elevate(args: list[str] | None = None) -> bool:
     """以管理员身份重新启动自己。成功返回 True（此时应退出当前进程）。
 
     走 UAC 弹窗（`runas`），不是偷偷提权 —— 提权必须让用户看到并同意。
@@ -514,9 +528,8 @@ def elevate() -> bool:
     if not IS_WINDOWS:
         return False
     try:
-        params = subprocess.list2cmdline(sys.argv[1:])
         rc = ctypes.windll.shell32.ShellExecuteW(
-            None, "runas", sys.executable, params, os.getcwd(), 1
+            None, "runas", sys.executable, elevate_params(args), os.getcwd(), 1
         )
         return int(rc) > 32
     except (AttributeError, OSError):
