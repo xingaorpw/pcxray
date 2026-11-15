@@ -328,9 +328,12 @@ def render(report: Report, limit: int = 0, only: str = "") -> list[str]:
             # 读不到 explorer、也没有可读的进程启动时间。这时候写「登录 03:54」
             # 就是把开机时间冒充成登录时间 —— 宁可说不知道。
             lines.append(f"  开机 {boot_text}　登录时间未知")
+    # 有来源读不到时，「自启 0 条」是假的 —— 这台机器可能有 183 条，只是没读到。
+    # 数字旁边必须带一句，否则用户会以为系统很干净（CONTRIBUTING 第 5 条）。
+    missed = f"，另有 {len(report.problems)} 部分没读到（见下方）" if report.problems else ""
     lines.append(
         f"  进程 {report.process_count} 个"
-        f"　自启 {len(report.items)} 条（启用 {len(report.enabled)}）"
+        f"　自启 {len(report.items)} 条（启用 {len(report.enabled)}）{missed}"
     )
     auto_mb = report.autostart_memory()
     if auto_mb:

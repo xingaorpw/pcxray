@@ -112,6 +112,27 @@ class TestShortSourceAndMarks(unittest.TestCase):
         self.assertIn("不显窗", row)
 
 
+class TestHeaderSaysWhenSomethingWasNotRead(unittest.TestCase):
+    """有来源读不到时，「自启 0 条」是假的 —— 这台机器可能有 183 条，只是没读到。
+
+    数字旁边不带一句，用户会以为系统很干净（CONTRIBUTING 第 5 条）。
+    """
+
+    def _header(self, problems):
+        rep = report.Report()
+        rep.problems = list(problems)
+        lines = report.render(rep)
+        return next(line for line in lines if "自启" in line and "条" in line)
+
+    def test_missed_parts_are_named_next_to_the_number(self):
+        line = self._header(["计划任务：没找到 powershell.exe", "服务：没找到 powershell.exe"])
+        self.assertIn("另有 2 部分没读到", line)
+
+    def test_no_problem_means_no_extra_words(self):
+        line = self._header([])
+        self.assertNotIn("没读到", line)
+
+
 class TestBuildScansWhenGivenNothing(unittest.TestCase):
     """`build()` 不传 entries 时要自己扫，并且把「读不到」带上。
 
