@@ -26,6 +26,17 @@ import urllib.request
 # 直接 `python scripts/ci_checks.py` 时也能 import 到本仓库的 pcxray
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Windows 的 CI runner 控制台默认是 cp1252，打印 `✗` 或中文直接 UnicodeEncodeError
+# 把整个自检打死（真发生过：GitHub Actions 的 windows-latest 上就是这样）。
+# 这里自己把输出改成 UTF-8；真改不了（重定向到不支持的对象）就退化成 replace，
+# 宁可显示成问号也不能让自检崩掉。
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError, ValueError):
+            pass
+
 FAILED: list[str] = []
 
 

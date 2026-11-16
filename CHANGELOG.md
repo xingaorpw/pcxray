@@ -25,6 +25,12 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **Windows 的 CI runner 控制台是 cp1252，自检脚本一打印 `✗` 就崩。**
+  GitHub Actions 的 `windows-latest` 上控制台不是 UTF-8，`print("✗ …")` 直接
+  `UnicodeEncodeError: 'charmap' codec can't encode`，整个自检以退出码 1 结束 ——
+  看起来像「自检没过」，其实是「打印不出来」。现在脚本自己把 stdout/stderr
+  改成 UTF-8（改不了就退化成 `errors="replace"`，宁可显示成问号也不能崩）。
+  本机用 `PYTHONIOENCODING=cp1252` 复现过：改之前崩，改之后 `全部通过`。
 - **加了 `scripts/fake_linux.py`：推之前先在本机假装 Linux 跑一遍。**
   这套代码只在 Windows 上开发，CI 的 Linux 任务才是第一次真正的异平台运行 ——
   以前只能推上去等十几分钟看红不红，一轮一轮试。这个脚本把「不像 Windows」的
