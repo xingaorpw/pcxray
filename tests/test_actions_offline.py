@@ -207,10 +207,20 @@ class TestBackupFiles(unittest.TestCase):
         real_open = os.open
         state = {"n": 0}
 
+        class SharedViolation(OSError):
+            """Windows 上 OSError 会带 `winerror`，别的系统没有。
+
+            直接写 `OSError(13, ..., None, 32)` 在 Linux 上拿不到 `winerror`，
+            这条测试就验不到「重试」而变成「异常直接冒出来」。给个带属性的
+            子类，重试逻辑在所有系统上都能验。
+            """
+
+            winerror = 32
+
         def flaky(path, flags, mode=0o777, *args, **kwargs):
             if str(path).endswith(".json") and state["n"] == 0:
                 state["n"] += 1
-                raise OSError(13, "拒绝访问。", None, 32)  # 共享冲突
+                raise SharedViolation(13, "拒绝访问。")  # 共享冲突
             return real_open(path, flags, mode, *args, **kwargs)
 
         with mock.patch.object(actions.os, "open", side_effect=flaky):
@@ -713,7 +723,9 @@ class TestFolderItemInMoveMode(unittest.TestCase):
         self.assertIn("--mode move", results[0].message)
 
     def test_flag_mode_still_plans_a_change(self):
-        plan = actions._plan(self._entry(), False, actions.MODE_FLAG)
+        with mock.patch.object(actions, "_read_value", return_value=(False, None, 0)), \
+                mock.patch.object(actions, "_value_exists", return_value=True):
+            plan = actions._plan(self._entry(), False, actions.MODE_FLAG)
         self.assertIsNotNone(plan)
         self.assertEqual(plan["kind"], "flag")
         self.assertIn("StartupApproved", plan["subkey"])
@@ -1258,7 +1270,8 @@ class TestRestoreDoesNotRecreateStaleFlags(unittest.TestCase):
         path = os.path.join(self._dir.name, "b.json")
         with open(path, "w", encoding="utf-8") as handle:
             json.dump({"created": "2026-11-15 03:00:00", "ops": [op]}, handle)
-        results, _used = actions.restore(path)
+        with mock.patch.object(actions, "_item_still_there", return_value=False):
+            results, _used = actions.restore(path)
         self.assertEqual(len(results), 1)
         self.assertTrue(results[0].ok)
         self.assertIn("已经不在了", results[0].message)
@@ -1424,7 +1437,8 @@ class TestRestoreDoesNotCreateRegistryKeys(unittest.TestCase):
                     },
                     handle,
                 )
-            results, _path = actions.restore(path)
+            with mock.patch.object(actions, "_subkey_exists", return_value=False):
+                results, _path = actions.restore(path)
         self.assertFalse(results[0].ok)
         self.assertIn("没有这个注册表位置", results[0].message)
 

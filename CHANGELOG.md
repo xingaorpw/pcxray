@@ -25,6 +25,13 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **加了 `scripts/fake_linux.py`：推之前先在本机假装 Linux 跑一遍。**
+  这套代码只在 Windows 上开发，CI 的 Linux 任务才是第一次真正的异平台运行 ——
+  以前只能推上去等十几分钟看红不红，一轮一轮试。这个脚本把「不像 Windows」的
+  三件事摆好（`sys.platform` 不是 win32、`import winreg` 失败、`ctypes.WinDLL`
+  失败），本机就能跑出 `Ran 599 tests ... OK (skipped=85)`。它不能替代真 Linux
+  （路径语义、权限模型还是 Windows 的），但「漏了平台判断」「悄悄 import 了
+  winreg」这类最常见的红，推之前就能抓住。
 - **CI 第一次真跑，Linux 上 47 个失败 + 6 个报错。**
   仓库推上去之前 CI 从没跑过这套代码（推送被邮箱验证卡了几十轮），一跑就露：
   命令行只认 Windows（`main()` 在别的系统上直接返回 2），但调 `main()` 的 14 个
