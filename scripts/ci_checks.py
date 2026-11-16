@@ -1749,6 +1749,97 @@ def check_no_newer_stdlib_apis() -> None:
     )
 
 
+def _process_handle_count() -> int | None:
+    """当前进程开着多少个内核句柄。拿不到返回 None（非 Windows / ctypes 不给）。"""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+        kernel32.GetProcessHandleCount.argtypes = [
+            wintypes.HANDLE,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+        kernel32.GetProcessHandleCount.restype = wintypes.BOOL
+        count = wintypes.DWORD(0)
+        if not kernel32.GetProcessHandleCount(
+            kernel32.GetCurrentProcess(), ctypes.byref(count)
+        ):
+            return None
+        return int(count.value)
+    except Exception:  # noqa: BLE001 - 拿不到就别查了，不能因此判失败
+        return None
+
+
+def check_web_does_not_leak_per_request() -> None:
+    r"""每点一次「重新扫描」，进程不能多留几个内核句柄。
+
+    网页是长驻的：用户会反复点刷新。要是每次扫描漏一个 `OpenProcess` 或
+    文件句柄，用一下午之后进程就握不住新句柄了 —— 而这种泄漏在功能测试里
+    完全看不出来（每次请求都成功）。所以这里数句柄。
+
+    分两段量，因为两段的成本差很多：
+    - 30 次便宜的请求（页面 + 读缓存），抓 HTTP 层每次请求漏一个的那种
+    - 3 次真的重扫，抓扫描路径漏的那种
+
+    阈值 8 是给噪声留的（实测同一进程连续量会在 ±3 内抖）。
+    """
+    import json as _json
+    import threading as _threading
+    import urllib.request as _urlreq
+
+    from pcxray import web as _web
+
+    if _process_handle_count() is None:
+        print("  · 跳过句柄泄漏检查（拿不到句柄数）")
+        return
+
+    server = _web.make_server(0)
+    thread = _threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+    threads_before = _threading.active_count()
+
+    def fetch(path):
+        with _urlreq.urlopen(base + path, timeout=180) as response:
+            return response.read()
+
+    try:
+        fetch("/")
+        fetch("/api/report")
+        start = _process_handle_count()
+        for _ in range(30):
+            fetch("/")
+            fetch("/api/report")
+        after_cheap = _process_handle_count()
+        cheap_growth = (after_cheap or 0) - (start or 0)
+        check(
+            "30 次普通请求没留下句柄",
+            cheap_growth <= 8,
+            "" if cheap_growth <= 8 else f"句柄从 {start} 涨到 {after_cheap}（+{cheap_growth}）",
+        )
+        for _ in range(3):
+            _json.loads(fetch("/api/report?refresh=1"))
+        after_scan = _process_handle_count()
+        scan_growth = (after_scan or 0) - (after_cheap or 0)
+        check(
+            "3 次重扫没留下句柄",
+            scan_growth <= 8,
+            "" if scan_growth <= 8 else f"句柄从 {after_cheap} 涨到 {after_scan}（+{scan_growth}）",
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=30)
+    left = _threading.active_count() - threads_before
+    check(
+        "关掉服务之后没留下线程",
+        left <= 0,
+        "" if left <= 0 else f"比开服务之前多了 {left} 个线程",
+    )
+
+
 def check_served_page_is_the_template_filled_in() -> None:
     r"""真起一次服务，把页面取回来 —— 模板替换对不对，只有这一步能证明。
 
@@ -1835,7 +1926,94 @@ def check_served_page_is_the_template_filled_in() -> None:
         server.server_close()
 
 
+def _pid_alive(pid: int) -> bool:
+    """这个 PID 还活着吗。Windows 上不能用 os.kill(pid, 0) —— 那个会真的杀进程。"""
+    if pid <= 0:
+        return False
+    try:
+        if os.name == "nt":
+            import ctypes
+            from ctypes import wintypes
+
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+            kernel32.OpenProcess.restype = wintypes.HANDLE
+            kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+            kernel32.GetExitCodeProcess.argtypes = [
+                wintypes.HANDLE,
+                ctypes.POINTER(wintypes.DWORD),
+            ]
+            handle = kernel32.OpenProcess(0x1000, False, pid)  # QUERY_LIMITED_INFORMATION
+            if not handle:
+                return False
+            try:
+                # 刚被强杀的进程还会在手柄表里留一会儿，OpenProcess 照样成功。
+                # 真正的判据是退出码：259（STILL_ACTIVE）才算活着。
+                code = wintypes.DWORD(0)
+                if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                    return False
+                return code.value == 259
+            finally:
+                kernel32.CloseHandle(handle)
+        os.kill(pid, 0)
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def _acquire_run_lock():
+    """同一时间只许跑一份自检。
+
+    自检会在真机器上建探针（`pcxray_selftest_move` 这类固定名字）。两份同时
+    跑就会互相把对方的探针删掉 —— 现象是莫名其妙的「没有这一条」「值数 0」，
+    看起来像产品坏了，其实是自检自己踩自己（真发生过：一次被中断的
+    `ci_checks.py` 还在后台跑，下一次运行就一片红）。
+    """
+    import tempfile
+
+    path = os.path.join(tempfile.gettempdir(), "pcxray-ci-checks.lock")
+    for _attempt in range(2):
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            try:
+                with open(path, encoding="utf-8") as handle:
+                    pid = int(handle.read().strip() or "0")
+            except (OSError, ValueError):
+                pid = 0
+            if _pid_alive(pid):
+                return None, pid
+            # 上一次被强杀留下的僵尸锁，清掉重来
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+            continue
+        os.write(fd, str(os.getpid()).encode("ascii"))
+        os.close(fd)
+        return path, 0
+    return None, 0
+
+
+def _release_run_lock(path: str) -> None:
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+
 def main() -> int:
+    lock, holder = _acquire_run_lock()
+    if lock is None:
+        print(f"另一个自检正在跑（PID {holder}），这一轮不跑 —— 两份同时跑会互相删对方的探针")
+        return 1
+    try:
+        return _run_all_checks()
+    finally:
+        _release_run_lock(lock)
+
+
+def _run_all_checks() -> int:
     print("端到端自检")
     # 先记下这台机器现在的样子，最后再比一遍
     before_state = _registry_snapshot()
@@ -1852,6 +2030,7 @@ def main() -> int:
     check_page_js_escapes_hostile_attributes()
     check_page_js_filters()
     check_no_handle_leak()
+    check_web_does_not_leak_per_request()
     check_json_contract()
     check_autostart_reconciliation()
     check_page_js_reports_scan_failure()
