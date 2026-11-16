@@ -9,10 +9,15 @@ from __future__ import annotations
 import contextlib
 import json
 import io
+import sys
 import unittest
 from unittest import mock
 
 from pcxray import actions, autostart, cli, procs, web
+
+# 命令行本身只认 Windows：`main()` 在别的系统上第一件事就是拒绝（返回 2）。
+# 这些类调的都是 `main()`，所以在 Linux 上不是「失败」，是「没得跑」。
+WINDOWS_ONLY = unittest.skipUnless(sys.platform == "win32", "命令行只在 Windows 上跑")
 
 
 def entry(name, kind="run", source="测试"):
@@ -205,6 +210,7 @@ class TestResolveIgnoresSeparators(unittest.TestCase):
         self.assertEqual(cands, [])
 
 
+@WINDOWS_ONLY
 class TestMixedNamesAreAllReported(unittest.TestCase):
     """名字里混了一个不存在的，必须两条都报出来。
 
@@ -237,6 +243,7 @@ class _StubReport:
         self.problems: list[str] = []
 
 
+@WINDOWS_ONLY
 class TestFilterArgumentsAreForgiving(unittest.TestCase):
     """逗号后面带空格、随手大写，都不是用户的错。
 
@@ -275,6 +282,7 @@ class TestFilterArgumentsAreForgiving(unittest.TestCase):
             self.assertEqual(code, 0, value)
 
 
+@WINDOWS_ONLY
 class TestEmptyNameIsExplained(unittest.TestCase):
     """`pcxray off ""` 是引号没写对时最容易出现的输入。
 
@@ -303,6 +311,7 @@ class TestEmptyNameIsExplained(unittest.TestCase):
         self.assertIn("名字不能是空的", out.getvalue())
 
 
+@WINDOWS_ONLY
 class TestRamSaysWhenNumbersAreIncomplete(unittest.TestCase):
     """内存数字不完整时必须说明原因。
 
@@ -330,6 +339,7 @@ class TestRamSaysWhenNumbersAreIncomplete(unittest.TestCase):
         self.assertNotIn("自检没通过", out.getvalue())
 
 
+@WINDOWS_ONLY
 class TestPortRange(unittest.TestCase):
     """--port 70000 / -1 以前直接把 socket 的 OSError 抛出去，一屏 traceback。"""
 
@@ -350,6 +360,7 @@ class TestPortRange(unittest.TestCase):
             serve.assert_called_once()
 
 
+@WINDOWS_ONLY
 class TestMainDispatch(unittest.TestCase):
     """`main()` 自己的几条分支：不带参数、Ctrl+C、非 Windows、--elevate。
 
@@ -414,6 +425,7 @@ class TestMainDispatch(unittest.TestCase):
         elevate.assert_not_called()
 
 
+@WINDOWS_ONLY
 class TestUndoHintIsCopyPasteable(unittest.TestCase):
     """`off` 之后打出来的那句「反悔就运行：pcxray restore "..."」必须真能用。
 
@@ -467,6 +479,7 @@ class TestUndoHintIsCopyPasteable(unittest.TestCase):
         self.assertIn("重启后生效", out, f"办成了却没说什么时候生效：{out}")
 
 
+@WINDOWS_ONLY
 class TestPruneOutput(unittest.TestCase):
     """删了 7 份要能看出来「还有 2 份没列」。"""
 
@@ -482,6 +495,7 @@ class TestPruneOutput(unittest.TestCase):
         self.assertIn("还有 2 份", text, f"删了 7 份只列 5 份，却没说还有几份：{text}")
 
 
+@WINDOWS_ONLY
 class TestCommandWiring(unittest.TestCase):
     """on / restore / backups / list --json 这几条命令行以前没有过 CLI 级测试。
 
@@ -625,6 +639,7 @@ class TestCommandWiring(unittest.TestCase):
         self.assertEqual(out.getvalue().count(".json"), 15)
 
 
+@WINDOWS_ONLY
 class TestPruneCommand(unittest.TestCase):
     def test_zero_keep_exits_2(self):
         out, err = io.StringIO(), io.StringIO()
@@ -655,6 +670,7 @@ class TestPruneCommand(unittest.TestCase):
         self.assertIn("什么都没删", text)
 
 
+@WINDOWS_ONLY
 class TestNarrowTerminalIsCalledOut(unittest.TestCase):
     """表格比窗口宽时要说一句。
 
@@ -703,6 +719,7 @@ class TestNarrowTerminalIsCalledOut(unittest.TestCase):
         self.assertIn("会折行", captured.getvalue())
 
 
+@WINDOWS_ONLY
 class TestRamJsonHonoursLimit(unittest.TestCase):
     """`ram --json` 的 limit 语义要和 `list --json` 一致。
 
@@ -749,6 +766,7 @@ class TestRamJsonHonoursLimit(unittest.TestCase):
         self.assertEqual(len(json.loads(out)["groups"]), 40)
 
 
+@WINDOWS_ONLY
 class TestNegativeLimitsAreRejected(unittest.TestCase):
     """负的 --limit 不能静默丢数据。
 
@@ -768,6 +786,7 @@ class TestNegativeLimitsAreRejected(unittest.TestCase):
         self.assertIn("--limit 不能是负数", err.getvalue())
 
 
+@WINDOWS_ONLY
 class TestTruncationIsDisclosed(unittest.TestCase):
     """截断必须说出来。
 

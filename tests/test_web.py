@@ -9,6 +9,7 @@ import contextlib
 import io
 import json
 import socket
+import sys
 import threading
 import time
 import unittest
@@ -713,6 +714,7 @@ class TestPortHandling(unittest.TestCase):
         else:
             self.assertTrue(web._Server.allow_reuse_address)
 
+    @unittest.skipUnless(sys.platform == "win32", "serve 只在 Windows 上起得来")
     def test_occupied_port_fails_before_scanning(self):
         import socket
 
@@ -840,6 +842,11 @@ class TestStateChangeIsSerialised(unittest.TestCase):
         def slow_scan(*args, **kwargs):
             started.set()
             release.wait(5)
+            if sys.platform != "win32":
+                # 非 Windows 上没有注册表，真扫会抛 ModuleNotFoundError（在后台线程里
+                # 抛出来只会变成一条看不懂的报错）。这条测试要的是「扫得慢」，不是
+                # 「真扫出东西」，给个空结果就够。
+                return [], []
             return real_scan(*args, **kwargs)
 
         with mock.patch.object(autostart, "scan", slow_scan):

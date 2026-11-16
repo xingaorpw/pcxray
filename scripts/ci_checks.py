@@ -861,7 +861,7 @@ def check_move_mode_round_trip() -> None:
         print("  · 跳过 --mode move 往返（不是 Windows）")
         return
 
-    name = "pcxray_selftest_move"
+    name = _probe_name("move")
     base = r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Run"
     disabled = base + "-pcxray-disabled"
 
@@ -933,7 +933,7 @@ def check_task_off_restore_round_trip() -> None:
         print("  · 跳过计划任务往返（不是 Windows）")
         return
 
-    name = "pcxray_selftest_task"
+    name = _probe_name("task")
     state_script = f"(Get-ScheduledTask -TaskName '{name}').State"
     delete_script = f"Unregister-ScheduledTask -TaskName '{name}' -Confirm:$false"
     create_script = (
@@ -1028,7 +1028,7 @@ def check_flag_mode_off_restore_round_trip() -> None:
         print("  · 跳过标记模式往返（不是 Windows）")
         return
 
-    name = "pcxray_selftest_undo"
+    name = _probe_name("undo")
     base = r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Run"
     approved = (
         r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run32"
@@ -1367,7 +1367,7 @@ def check_dry_run_writes_nothing() -> None:
         print("  · 跳过 --dry-run 检查（不是 Windows）")
         return
 
-    name = "pcxray_selftest_noop"
+    name = _probe_name("noop")
     run_key = r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Run"
     approved = r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved"
 
@@ -1926,6 +1926,60 @@ def check_served_page_is_the_template_filled_in() -> None:
         server.server_close()
 
 
+_PROBE_RE = re.compile(r"^pcxray_selftest_([a-z0-9]+)_(\d+)$")
+
+
+def _probe_name(role: str) -> str:
+    r"""每次运行用唯一的探针名 —— 固定名字会被别的东西盯上。
+
+    实测：`pcxray_selftest_move` 和 `pcxray_collide_test` 这两个**精确名字**
+    写进 `HKCU\...\Run` 之后 0.3 秒内就没了，而 `pcxray_selftest_move99`、
+    `pcxray_collide_test2` 一直好好的。谁删的没查到（没有 Procmon 不好抓），
+    但自检不该因此红一片 —— 名字带上 PID，撞不上。
+    """
+    return f"pcxray_selftest_{role}_{os.getpid()}"
+
+
+def _sweep_stale_probes() -> None:
+    """清掉以前被强杀留下的探针。
+
+    探针指向的是真程序，留在 `Run` 里就是「开机多跑一个 notepad」—— 带 PID
+    的名字解决了撞名，代价是崩溃之后没人收拾。所以每次开工先扫一遍：持有者
+    已经不在了的，删掉。
+    """
+    import winreg
+
+    run = r"Software\Microsoft\Windows\CurrentVersion\Run"
+    keys = [
+        run,
+        run + "-pcxray-disabled",
+        r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Run",
+        r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Run-pcxray-disabled",
+        r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run",
+        r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run32",
+    ]
+    swept = 0
+    for key in keys:
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key, 0, winreg.KEY_READ | winreg.KEY_SET_VALUE) as handle:
+                count = winreg.QueryInfoKey(handle)[1]
+                names = [winreg.EnumValue(handle, i)[0] for i in range(count)]
+        except OSError:
+            continue
+        for value_name in names:
+            match = _PROBE_RE.match(value_name)
+            if not match or _pid_alive(int(match.group(2))):
+                continue
+            try:
+                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key, 0, winreg.KEY_SET_VALUE) as handle:
+                    winreg.DeleteValue(handle, value_name)
+                swept += 1
+            except OSError:
+                pass
+    if swept:
+        print(f"  · 清掉了 {swept} 个上次被强杀留下的探针")
+
+
 def _pid_alive(pid: int) -> bool:
     """这个 PID 还活着吗。Windows 上不能用 os.kill(pid, 0) —— 那个会真的杀进程。"""
     if pid <= 0:
@@ -2015,6 +2069,7 @@ def main() -> int:
 
 def _run_all_checks() -> int:
     print("端到端自检")
+    _sweep_stale_probes()
     # 先记下这台机器现在的样子，最后再比一遍
     before_state = _registry_snapshot()
     before_backups = set()

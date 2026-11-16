@@ -455,7 +455,8 @@ class TestMoveModeNeverOverwrites(unittest.TestCase):
         self._dir = tempfile.TemporaryDirectory()
         self._patch = mock.patch.object(actions, "BACKUP_DIR", self._dir.name)
         self._patch.start()
-        self.name = "pcxray_collide_test"
+        # 带 PID：这台机器上固定名字的 Run 值会在 0.3 秒内被别的东西删掉
+        self.name = f"pcxray_collide_test_{os.getpid()}"
         self._write(self.KEY, self.name, '"C:\\Windows\\System32\\notepad.exe" /A')
         self._write(self.OFF, self.name, '"C:\\Windows\\System32\\notepad.exe" /B')
 

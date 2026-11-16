@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 import unittest
 from unittest import mock
 
@@ -30,6 +31,7 @@ class TestArgsOf(unittest.TestCase):
 class TestRemovableDrive(unittest.TestCase):
     """U 盘 / 移动硬盘上的常驻程序很少是正常的 —— 这条判断以前没被测试碰过。"""
 
+    @unittest.skipUnless(sys.platform == "win32", "盘符判断要用 Windows 的路径语义")
     def test_removable_drive_is_suspect(self):
         with mock.patch.object(winapi, "IS_WINDOWS", True), mock.patch.object(
             winapi, "drive_type", return_value=2

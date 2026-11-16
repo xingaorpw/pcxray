@@ -182,6 +182,7 @@ class TestFailurePaths(unittest.TestCase):
         self.assertIn("没找到 powershell", reason)
 
 
+@unittest.skipUnless(pwsh.available(), "这台机器没有 PowerShell")
 class TestAgainstRealPowerShell(unittest.TestCase):
     def test_run_text_ok(self):
         ok, out, reason = pwsh.run_text("Write-Output 'hello'", timeout=30)

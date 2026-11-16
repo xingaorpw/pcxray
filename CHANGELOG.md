@@ -25,6 +25,20 @@
   就能点名关掉它。现在起服务时生成随机 token 写进页面，POST 必须带
   `X-PCXRAY-Token`，另外校验 `Origin` 同源和 `Content-Type: application/json`。
   同时补上 CSP、`X-Frame-Options: DENY`、`Referrer-Policy`。
+- **CI 第一次真跑，Linux 上 47 个失败 + 6 个报错。**
+  仓库推上去之前 CI 从没跑过这套代码（推送被邮箱验证卡了几十轮），一跑就露：
+  命令行只认 Windows（`main()` 在别的系统上直接返回 2），但调 `main()` 的 14 个
+  测试类没加平台门槛；`TestAgainstRealPowerShell` 在没有 PowerShell 的机器上照样
+  真跑；`TestRemovableDrive` 依赖 Windows 的盘符语义；网页那条「改状态和重扫不能
+  交错」的测试在后台线程里调真扫描，Linux 上没有 `winreg` 直接抛。现在都按
+  `skipUnless` 分开了 —— **纯逻辑的照旧在所有平台跑，真碰系统的只在 Windows 跑**。
+- **自检的探针名字改成每次运行唯一。**
+  这台机器上 `pcxray_selftest_move` 和 `pcxray_collide_test` 这两个**精确名字**
+  写进 `HKCU\...\Run` 之后 0.3 秒内就没了，而 `pcxray_selftest_move99`、
+  `pcxray_collide_test2` 一直好好的 —— 有个东西在盯着这两个名字。谁干的没查到
+  （没有 Procmon 不好抓），但自检不该因此红一片：名字带上 PID 就撞不上。代价是
+  崩溃之后没人收拾，所以每次开工先扫一遍 `pcxray_selftest_*_<pid>`，持有者已经
+  不在的就删掉（探针指向真程序，留在 `Run` 里就是开机多跑一个）。
 - **两份自检同时跑会互相踩，而且踩出来的现象像是产品坏了。**
   自检会在真机器上建固定名字的探针（`pcxray_selftest_move` 这类）。一次被
   中断的 `ci_checks.py` 还在后台跑，下一次运行就一片红：`✗ 挪走：命令成功

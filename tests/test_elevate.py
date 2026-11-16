@@ -15,6 +15,7 @@ import unittest
 from pcxray import winapi
 
 
+@unittest.skipUnless(sys.platform == "win32", "提权只有 Windows 有")
 class TestElevateParams(unittest.TestCase):
     def test_keeps_the_module_flag(self):
         params = winapi.elevate_params(["list", "--elevate"])
